@@ -1,6 +1,6 @@
 Sub ExtractRFQTables_Summary_WithCharts()
 
-    Dim ws As Worksheet: Set ws = ThisWorkbook.Sheets("Sales Tracker FY25-26")
+    Dim ws As Worksheet: Set ws = ActiveSheet
     Dim outSheet As Worksheet
     Dim sectionHeaders As Variant
     sectionHeaders = Array("Opportunity Discussion", "Organise", "KOM", "CBOM", "Quote preparation", "Quote review & submission", "Negotiation")
@@ -21,39 +21,17 @@ Sub ExtractRFQTables_Summary_WithCharts()
     End If
     On Error GoTo 0
 
-    ' Find required column positions from row 3 (updated from row 2) with partial matching to avoid header errors
-    Dim colSynced As Long, colOppName As Long, colRFQ As Long
-    Dim colInsideSales As Long, colCustReqDate As Long
-    colSynced = 0: colOppName = 0: colRFQ = 0
-    colInsideSales = 0: colCustReqDate = 0
-
-    Dim i As Long
-    For i = 1 To ws.Cells(3, ws.Columns.Count).End(xlToLeft).Column  ' <-- Changed row 2 to row 3
-        Dim headerText As String
-        headerText = LCase(Trim(ws.Cells(3, i).Text))                   ' <-- Changed row 2 to row 3
-        Select Case headerText
-            Case "synced quote"
-                colSynced = i
-            Case "opportunity name"
-                colOppName = i
-            Case "rfq received date"
-                colRFQ = i
-            Case Else
-                If InStr(headerText, "inside sales") > 0 Then colInsideSales = i
-                If InStr(headerText, "customer request") > 0 Then colCustReqDate = i
+    ' Find required column positions from row 2
+    Dim colSynced As Long, colOppName As Long, colRFQ As Long, i As Long
+    For i = 1 To ws.Cells(2, ws.Columns.Count).End(xlToLeft).Column
+        Select Case LCase(Trim(ws.Cells(2, i).Text))
+            Case "synced quote": colSynced = i
+            Case "opportunity name": colOppName = i
+            Case "rfq received date": colRFQ = i
         End Select
     Next i
-
-    ' Debug: print detected columns - open Immediate Window to see (Ctrl+G)
-    Debug.Print "Detected Headers Columns:"
-    Debug.Print "Synced Quote: " & colSynced
-    Debug.Print "Opportunity Name: " & colOppName
-    Debug.Print "RFQ Received Date: " & colRFQ
-    Debug.Print "Inside Sales: " & colInsideSales
-    Debug.Print "Customer Request Date: " & colCustReqDate
-
-    If colSynced = 0 Or colOppName = 0 Or colRFQ = 0 Or colInsideSales = 0 Or colCustReqDate = 0 Then
-        MsgBox "? Missing header(s): Synced Quote, Opportunity Name, RFQ Received Date, Inside Sales or Customer Request Date!", vbCritical
+    If colSynced = 0 Or colOppName = 0 Or colRFQ = 0 Then
+        MsgBox "? Missing header(s): Synced Quote, Opportunity Name or RFQ Received Date!", vbCritical
         Exit Sub
     End If
 
@@ -62,8 +40,10 @@ Sub ExtractRFQTables_Summary_WithCharts()
     Dim section As Variant, sectionStart As Long, sectionEnd As Long
     Dim j As Long, aging As Variant
     Dim maxAging() As Variant: ReDim maxAging(0 To UBound(sectionHeaders))
+    ' ==== NEW ARRAYS for avg ====
     Dim sumAging() As Double: ReDim sumAging(0 To UBound(sectionHeaders))
     Dim countAging() As Long: ReDim countAging(0 To UBound(sectionHeaders))
+    ' ============================
 
     Dim tempData As Collection
     Dim rowData As Variant
@@ -74,7 +54,7 @@ Sub ExtractRFQTables_Summary_WithCharts()
         section = sectionHeaders(i)
         sectionStart = 0: sectionEnd = 0
 
-        ' Locate section start in column B
+        ' Locate section start
         For j = 1 To lastRow
             If Trim(ws.Cells(j, 2).Value) = section Then
                 sectionStart = j
@@ -83,7 +63,7 @@ Sub ExtractRFQTables_Summary_WithCharts()
         Next j
         If sectionStart = 0 Then GoTo NextSection
 
-        ' Locate section end - looking for "Subtotal" in column B
+        ' Locate section end
         For j = sectionStart + 1 To lastRow
             If LCase(Trim(ws.Cells(j, 2).Value)) = "subtotal" Then
                 sectionEnd = j - 1
@@ -94,28 +74,22 @@ Sub ExtractRFQTables_Summary_WithCharts()
 
         Set tempData = New Collection
         maxAging(i) = 0
-        sumAging(i) = 0
-        countAging(i) = 0
+        sumAging(i) = 0          ' initialize the sum for this section
+        countAging(i) = 0        ' initialize the count for this section
 
         For j = sectionStart + 1 To sectionEnd
             If Application.CountA(ws.Rows(j)) = 0 Then GoTo SkipRow
-            Dim rfqDateVal As Variant, custReqDateVal As Variant
+            Dim rfqDateVal As Variant
             rfqDateVal = ws.Cells(j, colRFQ).Value
-            custReqDateVal = ws.Cells(j, colCustReqDate).Value
 
             If IsDate(rfqDateVal) Then
                 Dim rfqDate As Date: rfqDate = CDate(rfqDateVal)
                 If rfqDate <= Date Then
                     aging = Date - rfqDate
-                    ' Build array: Synced Quote, Inside Sales, Opportunity Name, RFQ Received Date, Customer Request Date, Aging
-                    rowData = Array(ws.Cells(j, colSynced).Value, _
-                                    ws.Cells(j, colInsideSales).Value, _
-                                    ws.Cells(j, colOppName).Value, _
-                                    rfqDate, _
-                                    custReqDateVal, _
-                                    aging)
+                    rowData = Array(ws.Cells(j, colSynced).Value, ws.Cells(j, colOppName).Value, rfqDate, aging)
                     tempData.Add rowData
                     If aging > maxAging(i) Then maxAging(i) = aging
+                    ' Accumulate sum and count
                     sumAging(i) = sumAging(i) + aging
                     countAging(i) = countAging(i) + 1
                 End If
@@ -129,38 +103,36 @@ SkipRow:
             outSheet.Cells(outRow, 1).Font.Bold = True
             outRow = outRow + 1
 
-            ' Table header - updated for added columns
+            ' Table header
             outSheet.Cells(outRow, 1).Value = "Synced Quote"
-            outSheet.Cells(outRow, 2).Value = "Inside Sales"
-            outSheet.Cells(outRow, 3).Value = "Opportunity Name"
-            outSheet.Cells(outRow, 4).Value = "RFQ Received Date"
-            outSheet.Cells(outRow, 5).Value = "Customer Request Date"
-            outSheet.Cells(outRow, 6).Value = "Aging (days)"
-            outSheet.Range(outSheet.Cells(outRow, 1), outSheet.Cells(outRow, 6)).Font.Bold = True
-            outSheet.Range(outSheet.Cells(outRow, 1), outSheet.Cells(outRow, 6)).Interior.Color = RGB(200, 200, 200)
+            outSheet.Cells(outRow, 2).Value = "Opportunity Name"
+            outSheet.Cells(outRow, 3).Value = "RFQ Received Date"
+            outSheet.Cells(outRow, 4).Value = "Aging (days)"
+            outSheet.Range(outSheet.Cells(outRow, 1), outSheet.Cells(outRow, 4)).Font.Bold = True
+            outSheet.Range(outSheet.Cells(outRow, 1), outSheet.Cells(outRow, 4)).Interior.Color = RGB(200, 200, 200)
             Dim tableStartRow As Long: tableStartRow = outRow
             outRow = outRow + 1
 
-            ' Output data rows, 6 columns wide now
+            ' Data rows
             For r = 1 To tempData.Count
                 rowData = tempData(r)
-                outSheet.Cells(outRow, 1).Resize(1, 6).Value = rowData
+                outSheet.Cells(outRow, 1).Resize(1, 4).Value = rowData
                 outRow = outRow + 1
             Next r
 
-            ' Borders for table
-            With outSheet.Range(outSheet.Cells(tableStartRow, 1), outSheet.Cells(outRow - 1, 6)).Borders
+            ' Borders
+            With outSheet.Range(outSheet.Cells(tableStartRow, 1), outSheet.Cells(outRow - 1, 4)).Borders
                 .LineStyle = xlContinuous
                 .Weight = xlThin
             End With
 
-            ' === Insert Chart ===
+            ' === CHART PART ===
             chartCount = chartCount + 1
             Dim chObj As ChartObject
             Set chObj = outSheet.ChartObjects.Add(Left:=500, Width:=350, _
-                                                  Top:=outSheet.Cells(tableStartRow, 8).Top, Height:=150) ' Chart placed in column H
+                                                  Top:=outSheet.Cells(tableStartRow, 6).Top, Height:=150)
             chObj.Chart.ChartType = xlColumnClustered
-            chObj.Chart.SetSourceData Source:=outSheet.Range(outSheet.Cells(tableStartRow + 1, 6), outSheet.Cells(outRow - 1, 6))
+            chObj.Chart.SetSourceData Source:=outSheet.Range(outSheet.Cells(tableStartRow + 1, 4), outSheet.Cells(outRow - 1, 4))
             chObj.Chart.SeriesCollection(1).XValues = outSheet.Range(outSheet.Cells(tableStartRow + 1, 1), outSheet.Cells(outRow - 1, 1))
             chObj.Chart.HasTitle = True
             chObj.Chart.ChartTitle.Text = section & " - RFQ Aging"
@@ -177,19 +149,19 @@ NextSection:
     Next i
 
     ' === Summary Table ===
-    Dim summaryStartCol As Long: summaryStartCol = 9 ' Column I to avoid overlap with tables/charts
+    Dim summaryStartCol As Long: summaryStartCol = 7 ' column G
     Dim summaryStartRow As Long: summaryStartRow = 1
 
     outSheet.Cells(summaryStartRow, summaryStartCol).Value = "Summary"
-    outSheet.Cells(summaryStartRow, summaryStartCol + 1).Value = "Avg Aging Days"
+    outSheet.Cells(summaryStartRow, summaryStartCol + 1).Value = "Avg Aging Days" ' <--- CHANGED LABEL
     outSheet.Range(outSheet.Cells(summaryStartRow, summaryStartCol), outSheet.Cells(summaryStartRow, summaryStartCol + 1)).Font.Bold = True
     outSheet.Range(outSheet.Cells(summaryStartRow, summaryStartCol), outSheet.Cells(summaryStartRow, summaryStartCol + 1)).Interior.Color = RGB(200, 200, 200)
 
     Dim summaryRow As Long: summaryRow = summaryStartRow + 1
     For i = 0 To UBound(sectionHeaders)
-        If countAging(i) > 0 Then
+        If countAging(i) > 0 Then    ' Only if there is at least one value
             outSheet.Cells(summaryRow, summaryStartCol).Value = sectionHeaders(i)
-            outSheet.Cells(summaryRow, summaryStartCol + 1).Value = Round(sumAging(i) / countAging(i), 2)
+            outSheet.Cells(summaryRow, summaryStartCol + 1).Value = Round(sumAging(i) / countAging(i), 2) ' AVGERAGE
             summaryRow = summaryRow + 1
         End If
     Next i
@@ -202,5 +174,7 @@ NextSection:
     MsgBox "? Done! Tables + charts saved to 'Extracted Summary'", vbInformation
 
 End Sub
+
+
 
 
