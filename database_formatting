@@ -1,0 +1,173 @@
+Sub CleanUp_InsertSubtotals_LastSectionConditional()
+
+    Dim ws As Worksheet
+    Set ws = ActiveSheet
+    
+    Application.ScreenUpdating = False
+    
+    Dim sectionHeaders As Variant
+    sectionHeaders = Array("Opportunity Discussion", "Organise", "Scrub BOM", "KOM", "CBOM", _
+                           "Quote preparation", "Quote review & submission", "Negotiation", "CBOM Re-work", "Total")
+    
+    Dim lastRow As Long
+    Dim i As Long, j As Long
+    
+    Dim valB As String, valC As String
+    
+    ' Step 1a: Remove "Count" and "Avg" rows below "Subtotal", "Total", or "Sum" rows
+    lastRow = ws.Cells(ws.Rows.Count, 2).End(xlUp).Row
+    For i = lastRow To 1 Step -1
+        valB = LCase(Trim(ws.Cells(i, 2).Value))
+        valC = LCase(Trim(ws.Cells(i, 3).Value))
+        If valB = "subtotal" Or valC = "sum" Then
+            j = i + 1
+            Do While j <= ws.Cells(ws.Rows.Count, 2).End(xlUp).Row
+                valC = LCase(Trim(ws.Cells(j, 3).Value))
+                If valC = "count" Or valC = "avg" Then
+                    ws.Rows(j).Delete
+                    ' do not increment j, rows shift up
+                Else
+                    Exit Do
+                End If
+            Loop
+        End If
+    Next i
+    
+    ' Step 1b: Remove old summary blocks (Subtotal, Total) with rows below until next section header or blank
+    lastRow = ws.Cells(ws.Rows.Count, 2).End(xlUp).Row
+    i = 1
+    Do While i <= lastRow
+        valB = LCase(Trim(ws.Cells(i, 2).Value))
+        If valB = "subtotal" Then
+            Dim delStart As Long: delStart = i
+            Dim delEnd As Long: delEnd = i
+            For j = i + 1 To lastRow
+                Dim testVal As String
+                testVal = Trim(ws.Cells(j, 2).Value)
+                If testVal = "" Or Not IsError(Application.Match(testVal, sectionHeaders, 0)) Then
+                    delEnd = j - 1
+                    Exit For
+                Else
+                    delEnd = j
+                End If
+            Next j
+            ws.Rows(delStart & ":" & delEnd).Delete
+            lastRow = ws.Cells(ws.Rows.Count, 2).End(xlUp).Row
+        Else
+            i = i + 1
+        End If
+    Loop
+    
+    lastRow = ws.Cells(ws.Rows.Count, 2).End(xlUp).Row
+    
+    
+    ' Step 3: Gather section header row numbers
+    Dim sectionRows() As Long
+    Dim countSections As Long: countSections = 0
+    
+    For i = 3 To lastRow
+        valB = Trim(ws.Cells(i, 2).Value)
+        If Not IsError(Application.Match(valB, sectionHeaders, 0)) Then
+            countSections = countSections + 1
+            ReDim Preserve sectionRows(1 To countSections)
+            sectionRows(countSections) = i
+        End If
+    Next i
+    
+    Dim grandTotal As Long
+    grandTotal = 0
+    
+    ' Step 4: Insert new Subtotal rows before section headers (except first)
+    For i = 2 To countSections
+        Dim prevStart As Long: prevStart = sectionRows(i - 1)
+        Dim currStart As Long: currStart = sectionRows(i)
+        
+        Dim countRows As Long
+        countRows = 1 ' count header itself
+        
+        For j = prevStart + 1 To currStart - 1
+            If Trim(ws.Cells(j, 4).Value) <> "" Then countRows = countRows + 1
+        Next j
+        
+        ws.Rows(currStart).Insert Shift:=xlDown
+        ws.Cells(currStart, 2).Value = "Subtotal"
+        ws.Cells(currStart, 3).Value = "Count"
+        ws.Cells(currStart, 4).Value = countRows
+        
+        grandTotal = grandTotal + countRows
+        
+        ' Update indexes of section headers after insertion
+        Dim k As Long
+        For k = i To countSections
+            sectionRows(k) = sectionRows(k) + 1
+        Next k
+        
+        lastRow = lastRow + 1
+    Next i
+    
+    ' Step 5: Insert subtotal row for last section only if empty cell in col D found below it
+    Dim lastSectionStart As Long: lastSectionStart = sectionRows(countSections)
+    Dim insertRow As Long: insertRow = 0
+    Dim foundEmpty As Boolean: foundEmpty = False
+    
+    lastRow = ws.Cells(ws.Rows.Count, 2).End(xlUp).Row
+    
+    For i = lastSectionStart + 1 To lastRow
+        If Trim(ws.Cells(i, 4).Value) = "" Then
+            insertRow = i
+            foundEmpty = True
+            Exit For
+        End If
+    Next i
+    
+    If foundEmpty Then
+        ' Count rows from last section header down to row above insertRow
+        Dim lastCount As Long
+        lastCount = 1 ' include header itself
+        
+        For i = lastSectionStart + 1 To insertRow - 1
+            If Trim(ws.Cells(i, 4).Value) <> "" Then lastCount = lastCount + 1
+        Next i
+        
+        ws.Rows(insertRow).Insert Shift:=xlDown
+        ws.Cells(insertRow, 2).Value = "Subtotal"
+        ws.Cells(insertRow, 3).Value = "Count"
+        ws.Cells(insertRow, 4).Value = lastCount
+        
+        grandTotal = grandTotal + lastCount
+        lastRow = lastRow + 1
+    End If
+    
+    Application.ScreenUpdating = True
+    'total row formatting
+    lastRow = ws.Cells(ws.Rows.Count, 2).End(xlUp).Row
+
+For i = 1 To lastRow
+    If StrComp(Trim(ws.Cells(i, 2).Value), "Total", vbTextCompare) = 0 Then
+        ' Delete 2 rows below "Total", ensure rows exist
+        If i + 2 <= ws.Rows.Count Then
+            ws.Rows(i + 1 & ":" & i + 2).Delete
+        End If
+        
+        ' Change "Sum" in col C to "Count"
+        If LCase(Trim(ws.Cells(i, 3).Value)) = "sum" Then
+            ws.Cells(i, 3).Value = "Count"
+        End If
+        
+        ' Set col D value to grandTotal
+        ws.Cells(i, 4).Value = grandTotal
+        
+        Exit For ' remove if multiple "Total" headers expected
+    End If
+Next i
+
+    'Call helperformat
+    Call ExtractRFQTables_Summary_WithCharts
+    Call OwnerInsideSales_CountTable_OnlyExpired
+    
+    
+
+End Sub
+
+
+
