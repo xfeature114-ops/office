@@ -98,7 +98,7 @@ Sub ExtractRFQTables_Summary_WithCharts()
         countAging(i) = 0
         countProjects(i) = 0
 
-        ' Collect rows, 4th column is the date column that depends on section
+        ' Collect rows
         For j = sectionStart To sectionEnd
             If Application.CountA(ws.Rows(j)) = 0 Then GoTo SkipRow
 
@@ -118,7 +118,6 @@ Sub ExtractRFQTables_Summary_WithCharts()
                 agingVal = ""   ' blank if invalid
             End If
 
-            ' Set rowData with RFQ Date before the dependent date column
             If LCase(Trim(section)) = "cbom" Then
                 rowData = Array(ws.Cells(j, colSynced).Value, insideSalesVal, ws.Cells(j, colOppName).Value, _
                                 rfqDateVal, commitDateVal, agingVal)
@@ -129,14 +128,12 @@ Sub ExtractRFQTables_Summary_WithCharts()
 
             tempData.Add rowData
 
-            ' Aging stats for valid RFQ dates
             If IsDate(rfqDateVal) Then
                 If agingVal > maxAging(i) Then maxAging(i) = agingVal
                 sumAging(i) = sumAging(i) + agingVal
                 countAging(i) = countAging(i) + 1
             End If
 
-            ' Project count by non-empty Opportunity name
             If Trim(ws.Cells(j, colOppName).Value) <> "" Then
                 countProjects(i) = countProjects(i) + 1
             End If
@@ -144,7 +141,6 @@ Sub ExtractRFQTables_Summary_WithCharts()
 SkipRow:
         Next j
 
-        ' Output section header
         With outSheet.Cells(outRow, 1)
             .Value = section
             .Font.Bold = True
@@ -153,18 +149,17 @@ SkipRow:
         End With
         outRow = outRow + 1
 
-        ' Output table header with RFQ Received Date before other date
         Dim hdrArray As Variant
         If LCase(Trim(section)) = "cbom" Then
             hdrArray = Array("Synced Quote", "Inside Sales", "Opportunity Name", "RFQ Received Date", "CBOM Commit Date", "Aging (days)")
         Else
             hdrArray = Array("Synced Quote", "Inside Sales", "Opportunity Name", "RFQ Received Date", "Customer Request Date", "Aging (days)")
         End If
-        
+
         With outSheet.Range(outSheet.Cells(outRow, 1), outSheet.Cells(outRow, 6))
             .Value = hdrArray
             .Font.Bold = True
-            .Interior.Color = RGB(200, 200, 200) ' default background color, will override later
+            .Interior.Color = RGB(200, 200, 200)
             .Font.Name = "Century Gothic"
         End With
 
@@ -172,7 +167,6 @@ SkipRow:
         Dim tableStartRow As Long: tableStartRow = outRow
         outRow = outRow + 1
 
-        ' Output data or no data message
         If tempData.Count > 0 Then
             For r = 1 To tempData.Count
                 rowData = tempData(r)
@@ -191,7 +185,6 @@ SkipRow:
             outRow = outRow + 1
         End If
 
-        ' Apply borders if range is valid
         If outRow - 1 >= tableStartRow Then
             With outSheet.Range(outSheet.Cells(tableStartRow, 1), outSheet.Cells(outRow - 1, 6)).Borders
                 .LineStyle = xlContinuous
@@ -199,7 +192,6 @@ SkipRow:
             End With
         End If
 
-        ' Add charts from column P (16)
         If tempData.Count > 0 Then
             chartCount = chartCount + 1
             Dim chObj As ChartObject
@@ -217,14 +209,14 @@ SkipRow:
             chObj.Name = "Chart_" & chartCount
             chObj.Chart.SeriesCollection(1).ApplyDataLabels Type:=xlDataLabelsShowValue
         End If
-        
+
         outRow = outRow + 2
 
 NextSection:
     Next i
 
-    ' === Summary Table ===
-    Dim summaryStartCol As Long: summaryStartCol = 7 ' Col G
+    ' Summary Table with Grand Total
+    Dim summaryStartCol As Long: summaryStartCol = 9
     Dim summaryStartRow As Long: summaryStartRow = 1
 
     With outSheet.Cells(summaryStartRow, summaryStartCol)
@@ -255,7 +247,7 @@ NextSection:
         summaryRow = summaryRow + 1
     Next i
 
-    ' Add Grand Total row
+    ' Grand Total
     With outSheet.Cells(summaryRow, summaryStartCol)
         .Value = "Grand Total"
         .Font.Bold = True
@@ -272,7 +264,7 @@ NextSection:
         .Weight = xlThin
     End With
 
-    ' === Color formatting for table headers and summary ===
+    ' Coloring for headers
     Dim sect As String
     Dim colorRGB As Variant
     Dim summaryHeaderRow As Long
@@ -280,18 +272,22 @@ NextSection:
     Dim functionColors As Object
     Set functionColors = CreateObject("Scripting.Dictionary")
 
-    functionColors.Add "organise", Array(197, 217, 241)           ' Light Blue
-    functionColors.Add "scrub bom", Array(244, 176, 132)           ' Light Pink
-    functionColors.Add "kom", Array(244, 204, 255)                 ' Light Purple
-    functionColors.Add "cbom", Array(255, 255, 0)                  ' Yellow
-    functionColors.Add "quote preparation", Array(181, 230, 162)   ' Light Green
-    functionColors.Add "quote review & submission", Array(146, 208, 80) ' Green
+    functionColors.Add "opportunity discussion", Array(230, 130, 238)
+    functionColors.Add "organise", Array(197, 217, 241)
+    functionColors.Add "scrub bom", Array(244, 176, 132)
+    functionColors.Add "kom", Array(244, 204, 255)
+    functionColors.Add "cbom", Array(255, 255, 0)
+    functionColors.Add "quote preparation", Array(181, 230, 162)
+    functionColors.Add "quote review & submission", Array(146, 208, 80)
+    functionColors.Add "negotiation", Array(127, 214, 241)
+    functionColors.Add "cbom re-work", Array(229, 21, 175)
 
-    ' Color table headers
+
     For i = 0 To UBound(sectionHeaders)
-        sect = LCase(sectionHeaders(i))
-        If functionColors.Exists(sect) Then
-            colorRGB = functionColors(sect)
+    sect = LCase(sectionHeaders(i))
+    If functionColors.Exists(sect) Then
+        colorRGB = functionColors(sect)
+        If tableHeaderRows(i) > 0 And tableHeaderRows(i) <= outSheet.Rows.Count Then
             With outSheet.Range(outSheet.Cells(tableHeaderRows(i), 1), outSheet.Cells(tableHeaderRows(i), 6)).Interior
                 .Color = RGB(colorRGB(0), colorRGB(1), colorRGB(2))
             End With
@@ -299,10 +295,12 @@ NextSection:
                 .Color = RGB(0, 0, 0)
                 .Bold = True
             End With
+        Else
+            Debug.Print "Invalid tableHeaderRows(" & i & "): " & tableHeaderRows(i)
         End If
-    Next i
+    End If
+Next i
 
-    ' Color summary section headers (not grand total row)
     For i = 0 To UBound(sectionHeaders)
         sect = LCase(sectionHeaders(i))
         If functionColors.Exists(sect) Then
@@ -314,7 +312,7 @@ NextSection:
         End If
     Next i
 
-    ' Highlight cells in column E with dates before today (light red fill)
+    ' Highlight dates in column E before today with light red fill
     Dim lastUsedRow As Long
     Dim checkRow As Long
     Dim checkCell As Range
@@ -325,8 +323,8 @@ NextSection:
         Set checkCell = outSheet.Cells(checkRow, 5)
         If IsDate(checkCell.Value) Then
             If CDate(checkCell.Value) < Date Then
-                checkCell.Interior.Color = RGB(255, 199, 206)       ' Light red
-                checkCell.Font.Color = RGB(156, 0, 6)               ' Dark red font for contrast
+                checkCell.Interior.Color = RGB(255, 199, 206)
+                checkCell.Font.Color = RGB(156, 0, 6)
             Else
                 checkCell.Interior.ColorIndex = xlNone
                 checkCell.Font.ColorIndex = xlAutomatic
@@ -334,7 +332,75 @@ NextSection:
         End If
     Next checkRow
 
-    MsgBox "? Done! Tables + charts saved to 'Extracted Summary'", vbInformation
+    ' === Create "RFQ This Week" table 3 rows below summary in columns F & G ===
+    Dim startOfWeek As Date, endOfWeek As Date
+    Dim dict As Object
+    Dim rfqVal As Variant, rfqDate As Variant
+    Dim rowOut As Long
+    Dim key As Variant
+    Dim maxCol As Long
+    Dim rfqTableStartRow As Long
+
+    startOfWeek = Date - Weekday(Date, vbMonday) + 1
+    endOfWeek = startOfWeek + 6
+
+    Set dict = CreateObject("Scripting.Dictionary")
+
+    ' Scan rows for RFQs received this week, collect unique RFQs
+    For r = 3 To lastRow
+        rfqVal = ws.Cells(r, colSynced).Value
+        rfqDate = ws.Cells(r, colRFQ).Value
+        If Not IsEmpty(rfqVal) And IsDate(rfqDate) Then
+            If rfqDate >= startOfWeek And rfqDate <= endOfWeek Then
+                If Not dict.Exists(rfqVal) Then dict.Add rfqVal, rfqDate
+            End If
+        End If
+    Next r
+
+    ' Starting row: 3 rows below Grand Total row in summary table
+    rfqTableStartRow = summaryRow + 3
+
+    ' Write heading "RFQ This Week"
+    With outSheet.Cells(rfqTableStartRow - 1, 9)
+        .Value = "RFQ This Week"
+        .Font.Bold = True
+        .Font.Size = 12
+        .Font.Name = "Century Gothic"
+    End With
+
+    ' Write headers in columns F (6) and G (7)
+    With outSheet.Range(outSheet.Cells(rfqTableStartRow, 9), outSheet.Cells(rfqTableStartRow, 10))
+        .Value = Array("Synced Quote", "RFQ Received Date")
+        .Font.Bold = True
+        .Interior.Color = RGB(200, 200, 200)
+        .Font.Name = "Century Gothic"
+    End With
+
+    rowOut = rfqTableStartRow + 1
+
+    If dict.Count > 0 Then
+        For Each key In dict.Keys
+            outSheet.Cells(rowOut, 9).Value = key
+            outSheet.Cells(rowOut, 10).Value = dict(key)
+            outSheet.Cells(rowOut, 9).Font.Name = "Century Gothic"
+            outSheet.Cells(rowOut, 10).Font.Name = "Century Gothic"
+            outSheet.Cells(rowOut, 10).NumberFormat = "dd-mmm-yyyy"
+            rowOut = rowOut + 1
+        Next key
+
+        With outSheet.Range(outSheet.Cells(rfqTableStartRow, 9), outSheet.Cells(rowOut - 1, 10)).Borders
+            .LineStyle = xlContinuous
+            .Weight = xlThin
+        End With
+        
+        outSheet.Columns("F:G").AutoFit
+    Else
+        outSheet.Cells(rfqTableStartRow, 9).Value = "No RFQs received this week"
+        outSheet.Cells(rfqTableStartRow, 9).Font.Italic = True
+        outSheet.Cells(rfqTableStartRow, 9).Font.Name = "Century Gothic"
+    End If
+
+    MsgBox "? Done! Tables + charts saved to 'Extracted Summary' including this week's RFQs", vbInformation
 
 End Sub
 
