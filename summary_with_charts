@@ -284,22 +284,22 @@ NextSection:
 
 
     For i = 0 To UBound(sectionHeaders)
-    sect = LCase(sectionHeaders(i))
-    If functionColors.Exists(sect) Then
-        colorRGB = functionColors(sect)
-        If tableHeaderRows(i) > 0 And tableHeaderRows(i) <= outSheet.Rows.Count Then
-            With outSheet.Range(outSheet.Cells(tableHeaderRows(i), 1), outSheet.Cells(tableHeaderRows(i), 6)).Interior
-                .Color = RGB(colorRGB(0), colorRGB(1), colorRGB(2))
-            End With
-            With outSheet.Cells(tableHeaderRows(i) - 1, 1).Font
-                .Color = RGB(0, 0, 0)
-                .Bold = True
-            End With
-        Else
-            Debug.Print "Invalid tableHeaderRows(" & i & "): " & tableHeaderRows(i)
+        sect = LCase(sectionHeaders(i))
+        If functionColors.Exists(sect) Then
+            colorRGB = functionColors(sect)
+            If tableHeaderRows(i) > 0 And tableHeaderRows(i) <= outSheet.Rows.Count Then
+                With outSheet.Range(outSheet.Cells(tableHeaderRows(i), 1), outSheet.Cells(tableHeaderRows(i), 6)).Interior
+                    .Color = RGB(colorRGB(0), colorRGB(1), colorRGB(2))
+                End With
+                With outSheet.Cells(tableHeaderRows(i) - 1, 1).Font
+                    .Color = RGB(0, 0, 0)
+                    .Bold = True
+                End With
+            Else
+                Debug.Print "Invalid tableHeaderRows(" & i & "): " & tableHeaderRows(i)
+            End If
         End If
-    End If
-Next i
+    Next i
 
     For i = 0 To UBound(sectionHeaders)
         sect = LCase(sectionHeaders(i))
@@ -332,13 +332,13 @@ Next i
         End If
     Next checkRow
 
-    ' === Create "RFQ This Week" table 3 rows below summary in columns F & G ===
+    ' === Create "RFQ This Week" table 3 rows below summary in columns I, J & K ===
     Dim startOfWeek As Date, endOfWeek As Date
     Dim dict As Object
     Dim rfqVal As Variant, rfqDate As Variant
+    Dim oppNameVal As String
     Dim rowOut As Long
     Dim key As Variant
-    Dim maxCol As Long
     Dim rfqTableStartRow As Long
 
     startOfWeek = Date - Weekday(Date, vbMonday) + 1
@@ -346,13 +346,16 @@ Next i
 
     Set dict = CreateObject("Scripting.Dictionary")
 
-    ' Scan rows for RFQs received this week, collect unique RFQs
+    ' Scan rows for RFQs received this week, collect unique RFQs with Opportunity Name
     For r = 3 To lastRow
         rfqVal = ws.Cells(r, colSynced).Value
         rfqDate = ws.Cells(r, colRFQ).Value
+        oppNameVal = ws.Cells(r, colOppName).Value
         If Not IsEmpty(rfqVal) And IsDate(rfqDate) Then
             If rfqDate >= startOfWeek And rfqDate <= endOfWeek Then
-                If Not dict.Exists(rfqVal) Then dict.Add rfqVal, rfqDate
+                If Not dict.Exists(rfqVal) Then
+                    dict.Add rfqVal, Array(oppNameVal, rfqDate)
+                End If
             End If
         End If
     Next r
@@ -368,9 +371,9 @@ Next i
         .Font.Name = "Century Gothic"
     End With
 
-    ' Write headers in columns F (6) and G (7)
-    With outSheet.Range(outSheet.Cells(rfqTableStartRow, 9), outSheet.Cells(rfqTableStartRow, 10))
-        .Value = Array("Synced Quote", "RFQ Received Date")
+    ' Write headers: Synced Quote | Opportunity Name | RFQ Received Date
+    With outSheet.Range(outSheet.Cells(rfqTableStartRow, 9), outSheet.Cells(rfqTableStartRow, 11))
+        .Value = Array("Synced Quote", "Opportunity Name", "RFQ Received Date")
         .Font.Bold = True
         .Interior.Color = RGB(200, 200, 200)
         .Font.Name = "Century Gothic"
@@ -380,28 +383,29 @@ Next i
 
     If dict.Count > 0 Then
         For Each key In dict.Keys
-            outSheet.Cells(rowOut, 9).Value = key
-            outSheet.Cells(rowOut, 10).Value = dict(key)
+            outSheet.Cells(rowOut, 9).Value = key                                  ' Synced Quote
+            outSheet.Cells(rowOut, 10).Value = dict(key)(0)                        ' Opportunity Name
+            outSheet.Cells(rowOut, 11).Value = dict(key)(1)                        ' RFQ Received Date
             outSheet.Cells(rowOut, 9).Font.Name = "Century Gothic"
             outSheet.Cells(rowOut, 10).Font.Name = "Century Gothic"
-            outSheet.Cells(rowOut, 10).NumberFormat = "dd-mmm-yyyy"
+            outSheet.Cells(rowOut, 11).Font.Name = "Century Gothic"
+            outSheet.Cells(rowOut, 11).NumberFormat = "dd-mmm-yyyy"
             rowOut = rowOut + 1
         Next key
 
-        With outSheet.Range(outSheet.Cells(rfqTableStartRow, 9), outSheet.Cells(rowOut - 1, 10)).Borders
+        With outSheet.Range(outSheet.Cells(rfqTableStartRow, 9), outSheet.Cells(rowOut - 1, 11)).Borders
             .LineStyle = xlContinuous
             .Weight = xlThin
         End With
-        
-        outSheet.Columns("F:G").AutoFit
+
+        outSheet.Columns("I:K").AutoFit
     Else
         outSheet.Cells(rfqTableStartRow, 9).Value = "No RFQs received this week"
         outSheet.Cells(rfqTableStartRow, 9).Font.Italic = True
         outSheet.Cells(rfqTableStartRow, 9).Font.Name = "Century Gothic"
     End If
-    ' ---manas patel br---
-    
 
+    ' ---manas patel br---
 
     MsgBox "? Done! Tables + charts saved to 'Extracted Summary' including this week's RFQs", vbInformation
 
