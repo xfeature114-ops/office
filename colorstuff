@@ -1,0 +1,188 @@
+Function SafeDate(dateText As Variant) As Variant
+    On Error GoTo InvalidDate
+    If Trim(dateText) = "" Then
+        SafeDate = Null
+    Else
+        SafeDate = CDate(dateText)
+    End If
+    Exit Function
+InvalidDate:
+    SafeDate = Null
+End Function
+
+Sub ColorAndSegregate_RFQs_Full()
+
+    ' === SHEET SETUP ===
+    Dim srcWS As Worksheet, destWS As Worksheet
+    Set srcWS = ThisWorkbook.Sheets("Sales Tracker FY25-26")
+    Set destWS = ThisWorkbook.Sheets("Output1")
+
+    ' === 1. Find required columns in source sheet ===
+    Dim syncedCol As Long, startCol As Long, endCol As Long
+    syncedCol = 0: startCol = 0: endCol = 0
+
+    Dim colCheck As Long
+    For colCheck = 1 To srcWS.Cells(2, srcWS.Columns.Count).End(xlToLeft).Column
+        Select Case LCase(Trim(srcWS.Cells(2, colCheck).Value))
+            Case "synced quote": syncedCol = colCheck
+            Case "quote start date": startCol = colCheck
+            Case "quote end date": endCol = colCheck
+        End Select
+    Next colCheck
+
+    If syncedCol = 0 Or startCol = 0 Or endCol = 0 Then
+        MsgBox "Required columns not found in source sheet!", vbCritical
+        Exit Sub
+    End If
+
+    ' === 2. Build RFQ ? Section dictionary ===
+    Dim rfqDict As Object: Set rfqDict = CreateObject("Scripting.Dictionary")
+    Dim rfqVal As Variant, sectionHeader As String
+    Dim i As Long, lastRowSrc As Long
+    lastRowSrc = srcWS.Cells(srcWS.Rows.Count, syncedCol).End(xlUp).Row
+
+    sectionHeader = ""
+    For i = 3 To lastRowSrc
+        If Trim(srcWS.Cells(i, "B").Value) <> "" Then
+            sectionHeader = LCase(Trim(srcWS.Cells(i, "B").Value))
+        End If
+
+        rfqVal = LCase(Trim(srcWS.Cells(i, syncedCol).Value))
+        If rfqVal <> "" Then
+            rfqDict(rfqVal) = sectionHeader
+        End If
+    Next i
+
+    ' === 3. Section ? Stage mapping ===
+    Dim sectionMap As Object: Set sectionMap = CreateObject("Scripting.Dictionary")
+    sectionMap.Add "opportunity discussion", "early"
+    sectionMap.Add "organise", "early"
+    sectionMap.Add "scrub bom", "early"
+    sectionMap.Add "kom", "early"
+    sectionMap.Add "cbom", "early"
+    sectionMap.Add "techno commercial review", "quote preparation"
+    sectionMap.Add "quote preparation", "quote preparation"
+    sectionMap.Add "quote submission", "quote review & submission"
+    sectionMap.Add "quote review & submission", "quote review & submission"
+    sectionMap.Add "negotiation", "negotiation"
+
+    ' === 4. Stage ? Color mapping ===
+    Dim colorMap As Object: Set colorMap = CreateObject("Scripting.Dictionary")
+    colorMap.Add "early", RGB(255, 192, 0)
+    colorMap.Add "quote preparation", RGB(255, 255, 0)
+    colorMap.Add "quote review & submission", RGB(146, 208, 80)
+    colorMap.Add "negotiation", RGB(0, 176, 80)
+
+    ' === 5. Detect input grid size ===
+    Dim lastInputRow As Long, lastInputCol As Long
+    Dim maxRow As Long: maxRow = 0
+    lastInputCol = destWS.Cells(3, destWS.Columns.Count).End(xlToLeft).Column
+
+    Dim rowLoop As Long, colLoop As Long, r As Long
+    For colLoop = 2 To lastInputCol
+        r = destWS.Cells(destWS.Rows.Count, colLoop).End(xlUp).Row
+        If r > maxRow Then maxRow = r
+    Next colLoop
+    lastInputRow = maxRow
+
+    ' === 6. Color matched RFQs ===
+    Dim matchedRFQs As Object: Set matchedRFQs = CreateObject("Scripting.Dictionary")
+    Dim inputRFQ As String, sectionFound As String, standardStage As String
+
+    For rowLoop = 3 To lastInputRow
+        For colLoop = 2 To lastInputCol
+            inputRFQ = LCase(Trim(destWS.Cells(rowLoop, colLoop).Value))
+            If inputRFQ <> "" Then
+                If rfqDict.Exists(inputRFQ) Then
+                    sectionFound = rfqDict(inputRFQ)
+                    If sectionMap.Exists(sectionFound) Then
+                        standardStage = sectionMap(sectionFound)
+                        If colorMap.Exists(standardStage) Then
+                            destWS.Cells(rowLoop, colLoop).Interior.Color = colorMap(standardStage)
+                        End If
+                    End If
+                    matchedRFQs(inputRFQ) = True
+                End If
+            End If
+        Next colLoop
+    Next rowLoop
+
+    ' === 7. Find existing "Extra" column ===
+    Dim extraCol As Long: extraCol = 0
+    For colCheck = 1 To destWS.Cells(2, destWS.Columns.Count).End(xlToLeft).Column
+        If LCase(Trim(destWS.Cells(2, colCheck).Value)) = "extra" Then
+            extraCol = colCheck
+            Exit For
+        End If
+    Next colCheck
+
+    If extraCol = 0 Then
+        MsgBox "'Extra' column not found in Output1 sheet!", vbCritical
+        Exit Sub
+    End If
+
+    Dim startDateCol As Long: startDateCol = extraCol + 1
+    Dim endDateCol As Long: endDateCol = extraCol + 2
+    destWS.Cells(2, startDateCol).Value = "Quote Start Date"
+    destWS.Cells(2, endDateCol).Value = "Quote End Date"
+
+    ' === 8. Get current week range ===
+    Dim today As Date: today = Date
+    Dim weekStart As Date: weekStart = today - Weekday(today, vbMonday) + 1
+    Dim weekEnd As Date: weekEnd = weekStart + 6
+
+    ' === 9. Add unmatched RFQs to Extra column if date conditions pass ===
+    Dim exRow As Long: exRow = 3
+    Dim qStart As Variant, qEnd As Variant
+    Dim qStartRaw As String, qEndRaw As String
+
+    For Each rfqVal In rfqDict.Keys
+        If Not matchedRFQs.Exists(rfqVal) Then
+            For i = 3 To lastRowSrc
+                If LCase(Trim(srcWS.Cells(i, syncedCol).Value)) = rfqVal Then
+                    qStartRaw = Trim(srcWS.Cells(i, startCol).Value)
+                    qEndRaw = Trim(srcWS.Cells(i, endCol).Value)
+
+                    qStart = SafeDate(qStartRaw)
+                    qEnd = SafeDate(qEndRaw)
+
+                    sectionFound = rfqDict(rfqVal)
+
+                    If sectionMap.Exists(sectionFound) Then
+                        standardStage = sectionMap(sectionFound)
+
+                        If (standardStage = "quote preparation" Or _
+                            standardStage = "quote review & submission" Or _
+                            standardStage = "negotiation") Then
+
+                            If Not IsNull(qEnd) Then
+                                If qEnd >= weekStart And qEnd <= weekEnd Then
+                                    destWS.Cells(exRow, extraCol).Value = rfqVal
+                                    destWS.Cells(exRow, startDateCol).Value = Format(qStart, "mm/dd/yyyy")
+                                    destWS.Cells(exRow, endDateCol).Value = Format(qEnd, "mm/dd/yyyy")
+
+                                    If colorMap.Exists(standardStage) Then
+                                        destWS.Cells(exRow, extraCol).Interior.Color = colorMap(standardStage)
+                                        destWS.Cells(exRow, startDateCol).Interior.Color = colorMap(standardStage)
+                                        destWS.Cells(exRow, endDateCol).Interior.Color = colorMap(standardStage)
+                                    End If
+
+                                    exRow = exRow + 1
+                                End If
+                            End If
+                        End If
+                    End If
+                    Exit For
+                End If
+            Next i
+        End If
+    Next rfqVal
+
+    ' === 10. Done ===
+    MsgBox "? RFQ processing complete!" & vbCrLf & _
+           "? Input RFQs colored from grid" & vbCrLf & _
+           "? Filtered Extras (this week) added with mm/dd/yyyy format", vbInformation
+
+End Sub
+
+
