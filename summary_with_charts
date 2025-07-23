@@ -24,8 +24,8 @@ Sub ExtractRFQTables_Summary_WithCharts()
 
     ' Find required column positions from row 2 dynamically
     Dim colSynced As Long, colOppName As Long, colRFQ As Long
-    Dim colCustomerRequest As Long, colInsideSales As Long
-    colSynced = 0: colOppName = 0: colRFQ = 0: colCustomerRequest = 0: colInsideSales = 0
+    Dim colCustomerRequest As Long, colInsideSales As Long, colCBOMCommitDate As Long
+    colSynced = 0: colOppName = 0: colRFQ = 0: colCustomerRequest = 0: colInsideSales = 0: colCBOMCommitDate = 0
 
     Dim i As Long, lastCol As Long
     lastCol = ws.Cells(2, ws.Columns.Count).End(xlToLeft).Column
@@ -36,11 +36,20 @@ Sub ExtractRFQTables_Summary_WithCharts()
             Case "rfq received date": colRFQ = i
             Case "customer request date": colCustomerRequest = i
             Case "inside_sales": colInsideSales = i
+            Case "cbom commit date": colCBOMCommitDate = i
         End Select
     Next i
 
-    If colSynced = 0 Or colOppName = 0 Or colRFQ = 0 Or colCustomerRequest = 0 Or colInsideSales = 0 Then
-        MsgBox "? Missing header(s): Synced Quote, Opportunity Name, RFQ Received Date, Customer Request Date, or Inside Sales!", vbCritical
+    If colSynced = 0 Or colOppName = 0 Or colRFQ = 0 Or colInsideSales = 0 Then
+        MsgBox "? Missing header(s): Synced Quote, Opportunity Name, RFQ Received Date, Inside Sales, or required Date columns!", vbCritical
+        Exit Sub
+    End If
+    If colCBOMCommitDate = 0 Then
+        MsgBox "? Missing header: CBOM Commit Date. Required for CBOM section.", vbCritical
+        Exit Sub
+    End If
+    If colCustomerRequest = 0 Then
+        MsgBox "? Missing header: Customer Request Date. Required for non-CBOM sections.", vbCritical
         Exit Sub
     End If
 
@@ -51,12 +60,15 @@ Sub ExtractRFQTables_Summary_WithCharts()
     Dim maxAging() As Variant: ReDim maxAging(0 To UBound(sectionHeaders))
     Dim sumAging() As Double: ReDim sumAging(0 To UBound(sectionHeaders))
     Dim countAging() As Long: ReDim countAging(0 To UBound(sectionHeaders))
-    Dim countProjects() As Long: ReDim countProjects(0 To UBound(sectionHeaders)) ' counts opportunity name
-
+    Dim countProjects() As Long: ReDim countProjects(0 To UBound(sectionHeaders))
     Dim tempData As Collection
     Dim rowData As Variant
     Dim r As Long
     Dim chartCount As Long: chartCount = 0
+
+    ' Store each table header row for later coloring
+    Dim tableHeaderRows() As Long
+    ReDim tableHeaderRows(0 To UBound(sectionHeaders))
 
     For i = 0 To UBound(sectionHeaders)
         section = sectionHeaders(i)
@@ -86,16 +98,18 @@ Sub ExtractRFQTables_Summary_WithCharts()
         countAging(i) = 0
         countProjects(i) = 0
 
-        ' Collect all rows regardless of RFQ date validity
+        ' Collect rows, 4th column is the date column that depends on section
         For j = sectionStart To sectionEnd
             If Application.CountA(ws.Rows(j)) = 0 Then GoTo SkipRow
 
             Dim rfqDateVal As Variant
             Dim custReqDateVal As Variant
             Dim insideSalesVal As Variant
+            Dim commitDateVal As Variant
 
             rfqDateVal = ws.Cells(j, colRFQ).Value
             custReqDateVal = ws.Cells(j, colCustomerRequest).Value
+            commitDateVal = ws.Cells(j, colCBOMCommitDate).Value
             insideSalesVal = ws.Cells(j, colInsideSales).Value
 
             If IsDate(rfqDateVal) Then
@@ -104,18 +118,25 @@ Sub ExtractRFQTables_Summary_WithCharts()
                 agingVal = ""   ' blank if invalid
             End If
 
-            rowData = Array(ws.Cells(j, colSynced).Value, insideSalesVal, ws.Cells(j, colOppName).Value, _
-                            custReqDateVal, rfqDateVal, agingVal)
+            ' Set rowData with RFQ Date before the dependent date column
+            If LCase(Trim(section)) = "cbom" Then
+                rowData = Array(ws.Cells(j, colSynced).Value, insideSalesVal, ws.Cells(j, colOppName).Value, _
+                                rfqDateVal, commitDateVal, agingVal)
+            Else
+                rowData = Array(ws.Cells(j, colSynced).Value, insideSalesVal, ws.Cells(j, colOppName).Value, _
+                                rfqDateVal, custReqDateVal, agingVal)
+            End If
+
             tempData.Add rowData
 
-            ' Update aging stats ONLY for valid RFQ dates
+            ' Aging stats for valid RFQ dates
             If IsDate(rfqDateVal) Then
                 If agingVal > maxAging(i) Then maxAging(i) = agingVal
                 sumAging(i) = sumAging(i) + agingVal
                 countAging(i) = countAging(i) + 1
             End If
 
-            ' Count projects based on Opportunity Name presence
+            ' Project count by non-empty Opportunity name
             If Trim(ws.Cells(j, colOppName).Value) <> "" Then
                 countProjects(i) = countProjects(i) + 1
             End If
@@ -123,7 +144,7 @@ Sub ExtractRFQTables_Summary_WithCharts()
 SkipRow:
         Next j
 
-        ' Output section header regardless
+        ' Output section header
         With outSheet.Cells(outRow, 1)
             .Value = section
             .Font.Bold = True
@@ -132,35 +153,34 @@ SkipRow:
         End With
         outRow = outRow + 1
 
-        ' Output table header (6 columns)
+        ' Output table header with RFQ Received Date before other date
+        Dim hdrArray As Variant
+        If LCase(Trim(section)) = "cbom" Then
+            hdrArray = Array("Synced Quote", "Inside Sales", "Opportunity Name", "RFQ Received Date", "CBOM Commit Date", "Aging (days)")
+        Else
+            hdrArray = Array("Synced Quote", "Inside Sales", "Opportunity Name", "RFQ Received Date", "Customer Request Date", "Aging (days)")
+        End If
+        
         With outSheet.Range(outSheet.Cells(outRow, 1), outSheet.Cells(outRow, 6))
-            .Value = Array("Synced Quote", "Inside Sales", "Opportunity Name", "Customer Request Date", "RFQ Received Date", "Aging (days)")
+            .Value = hdrArray
             .Font.Bold = True
-            .Interior.Color = RGB(200, 200, 200)
+            .Interior.Color = RGB(200, 200, 200) ' default background color, will override later
             .Font.Name = "Century Gothic"
         End With
 
+        tableHeaderRows(i) = outRow
         Dim tableStartRow As Long: tableStartRow = outRow
         outRow = outRow + 1
 
-        ' Output data or "No data" row
+        ' Output data or no data message
         If tempData.Count > 0 Then
             For r = 1 To tempData.Count
                 rowData = tempData(r)
                 With outSheet.Cells(outRow, 1).Resize(1, 6)
                     .Value = rowData
                     .Font.Name = "Century Gothic"
-                    ' Format date columns if valid
-                    If IsDate(rowData(3)) Then
-                        .Cells(1, 4).NumberFormat = "dd-mmm-yyyy"
-                    Else
-                        .Cells(1, 4).NumberFormat = "General"
-                    End If
-                    If IsDate(rowData(4)) Then
-                        .Cells(1, 5).NumberFormat = "dd-mmm-yyyy"
-                    Else
-                        .Cells(1, 5).NumberFormat = "General"
-                    End If
+                    If IsDate(rowData(3)) Then .Cells(1, 4).NumberFormat = "dd-mmm-yyyy" Else .Cells(1, 4).NumberFormat = "General"
+                    If IsDate(rowData(4)) Then .Cells(1, 5).NumberFormat = "dd-mmm-yyyy" Else .Cells(1, 5).NumberFormat = "General"
                 End With
                 outRow = outRow + 1
             Next r
@@ -171,13 +191,15 @@ SkipRow:
             outRow = outRow + 1
         End If
 
-        ' Apply borders
-        With outSheet.Range(outSheet.Cells(tableStartRow, 1), outSheet.Cells(outRow - 1, 6)).Borders
-            .LineStyle = xlContinuous
-            .Weight = xlThin
-        End With
+        ' Apply borders if range is valid
+        If outRow - 1 >= tableStartRow Then
+            With outSheet.Range(outSheet.Cells(tableStartRow, 1), outSheet.Cells(outRow - 1, 6)).Borders
+                .LineStyle = xlContinuous
+                .Weight = xlThin
+            End With
+        End If
 
-        ' Add chart only if data exists (charts start from column P i.e., 16)
+        ' Add charts from column P (16)
         If tempData.Count > 0 Then
             chartCount = chartCount + 1
             Dim chObj As ChartObject
@@ -195,14 +217,14 @@ SkipRow:
             chObj.Name = "Chart_" & chartCount
             chObj.Chart.SeriesCollection(1).ApplyDataLabels Type:=xlDataLabelsShowValue
         End If
-
+        
         outRow = outRow + 2
 
 NextSection:
     Next i
 
     ' === Summary Table ===
-    Dim summaryStartCol As Long: summaryStartCol = 7 ' column G
+    Dim summaryStartCol As Long: summaryStartCol = 7 ' Col G
     Dim summaryStartRow As Long: summaryStartRow = 1
 
     With outSheet.Cells(summaryStartRow, summaryStartCol)
@@ -218,22 +240,99 @@ NextSection:
     outSheet.Range(outSheet.Cells(summaryStartRow, summaryStartCol), outSheet.Cells(summaryStartRow, summaryStartCol + 1)).Interior.Color = RGB(200, 200, 200)
 
     Dim summaryRow As Long: summaryRow = summaryStartRow + 1
+    Dim grandTotal As Long: grandTotal = 0
+
     For i = 0 To UBound(sectionHeaders)
         With outSheet.Cells(summaryRow, summaryStartCol)
             .Value = sectionHeaders(i)
             .Font.Name = "Century Gothic"
         End With
         With outSheet.Cells(summaryRow, summaryStartCol + 1)
-            .Value = countProjects(i)  ' COUNT rows with Opportunity Name filled
+            .Value = countProjects(i)
             .Font.Name = "Century Gothic"
         End With
+        grandTotal = grandTotal + countProjects(i)
         summaryRow = summaryRow + 1
     Next i
 
-    With outSheet.Range(outSheet.Cells(summaryStartRow, summaryStartCol), outSheet.Cells(summaryRow - 1, summaryStartCol + 1)).Borders
+    ' Add Grand Total row
+    With outSheet.Cells(summaryRow, summaryStartCol)
+        .Value = "Grand Total"
+        .Font.Bold = True
+        .Font.Name = "Century Gothic"
+    End With
+    With outSheet.Cells(summaryRow, summaryStartCol + 1)
+        .Value = grandTotal
+        .Font.Bold = True
+        .Font.Name = "Century Gothic"
+    End With
+
+    With outSheet.Range(outSheet.Cells(summaryStartRow, summaryStartCol), outSheet.Cells(summaryRow, summaryStartCol + 1)).Borders
         .LineStyle = xlContinuous
         .Weight = xlThin
     End With
+
+    ' === Color formatting for table headers and summary ===
+    Dim sect As String
+    Dim colorRGB As Variant
+    Dim summaryHeaderRow As Long
+
+    Dim functionColors As Object
+    Set functionColors = CreateObject("Scripting.Dictionary")
+
+    functionColors.Add "organise", Array(197, 217, 241)           ' Light Blue
+    functionColors.Add "scrub bom", Array(244, 176, 132)           ' Light Pink
+    functionColors.Add "kom", Array(244, 204, 255)                 ' Light Purple
+    functionColors.Add "cbom", Array(255, 255, 0)                  ' Yellow
+    functionColors.Add "quote preparation", Array(181, 230, 162)   ' Light Green
+    functionColors.Add "quote review & submission", Array(146, 208, 80) ' Green
+
+    ' Color table headers
+    For i = 0 To UBound(sectionHeaders)
+        sect = LCase(sectionHeaders(i))
+        If functionColors.Exists(sect) Then
+            colorRGB = functionColors(sect)
+            With outSheet.Range(outSheet.Cells(tableHeaderRows(i), 1), outSheet.Cells(tableHeaderRows(i), 6)).Interior
+                .Color = RGB(colorRGB(0), colorRGB(1), colorRGB(2))
+            End With
+            With outSheet.Cells(tableHeaderRows(i) - 1, 1).Font
+                .Color = RGB(0, 0, 0)
+                .Bold = True
+            End With
+        End If
+    Next i
+
+    ' Color summary section headers (not grand total row)
+    For i = 0 To UBound(sectionHeaders)
+        sect = LCase(sectionHeaders(i))
+        If functionColors.Exists(sect) Then
+            colorRGB = functionColors(sect)
+            summaryHeaderRow = summaryStartRow + 1 + i
+            With outSheet.Cells(summaryHeaderRow, summaryStartCol).Interior
+                .Color = RGB(colorRGB(0), colorRGB(1), colorRGB(2))
+            End With
+        End If
+    Next i
+
+    ' Highlight cells in column E with dates before today (light red fill)
+    Dim lastUsedRow As Long
+    Dim checkRow As Long
+    Dim checkCell As Range
+
+    lastUsedRow = outSheet.Cells(outSheet.Rows.Count, 5).End(xlUp).Row
+
+    For checkRow = 1 To lastUsedRow
+        Set checkCell = outSheet.Cells(checkRow, 5)
+        If IsDate(checkCell.Value) Then
+            If CDate(checkCell.Value) < Date Then
+                checkCell.Interior.Color = RGB(255, 199, 206)       ' Light red
+                checkCell.Font.Color = RGB(156, 0, 6)               ' Dark red font for contrast
+            Else
+                checkCell.Interior.ColorIndex = xlNone
+                checkCell.Font.ColorIndex = xlAutomatic
+            End If
+        End If
+    Next checkRow
 
     MsgBox "? Done! Tables + charts saved to 'Extracted Summary'", vbInformation
 
