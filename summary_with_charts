@@ -399,6 +399,8 @@ Next i
         outSheet.Cells(rfqTableStartRow, 9).Font.Italic = True
         outSheet.Cells(rfqTableStartRow, 9).Font.Name = "Century Gothic"
     End If
+    ' ---manas patel br---
+    
 
     MsgBox "? Done! Tables + charts saved to 'Extracted Summary' including this week's RFQs", vbInformation
 
