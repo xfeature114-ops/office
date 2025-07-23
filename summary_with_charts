@@ -40,10 +40,8 @@ Sub ExtractRFQTables_Summary_WithCharts()
     Dim section As Variant, sectionStart As Long, sectionEnd As Long
     Dim j As Long, aging As Variant
     Dim maxAging() As Variant: ReDim maxAging(0 To UBound(sectionHeaders))
-    ' ==== NEW ARRAYS for avg ====
     Dim sumAging() As Double: ReDim sumAging(0 To UBound(sectionHeaders))
     Dim countAging() As Long: ReDim countAging(0 To UBound(sectionHeaders))
-    ' ============================
 
     Dim tempData As Collection
     Dim rowData As Variant
@@ -74,8 +72,8 @@ Sub ExtractRFQTables_Summary_WithCharts()
 
         Set tempData = New Collection
         maxAging(i) = 0
-        sumAging(i) = 0          ' initialize the sum for this section
-        countAging(i) = 0        ' initialize the count for this section
+        sumAging(i) = 0
+        countAging(i) = 0
 
         For j = sectionStart + 1 To sectionEnd
             If Application.CountA(ws.Rows(j)) = 0 Then GoTo SkipRow
@@ -89,7 +87,6 @@ Sub ExtractRFQTables_Summary_WithCharts()
                     rowData = Array(ws.Cells(j, colSynced).Value, ws.Cells(j, colOppName).Value, rfqDate, aging)
                     tempData.Add rowData
                     If aging > maxAging(i) Then maxAging(i) = aging
-                    ' Accumulate sum and count
                     sumAging(i) = sumAging(i) + aging
                     countAging(i) = countAging(i) + 1
                 End If
@@ -97,36 +94,47 @@ Sub ExtractRFQTables_Summary_WithCharts()
 SkipRow:
         Next j
 
-        If tempData.Count > 0 Then
-            ' Section title
-            outSheet.Cells(outRow, 1).Value = section
-            outSheet.Cells(outRow, 1).Font.Bold = True
-            outRow = outRow + 1
+        ' Output section header regardless of data
+        With outSheet.Cells(outRow, 1)
+            .Value = section
+            .Font.Bold = True
+            .Font.Size = 12
+            .Font.Name = "Century Gothic"
+        End With
+        outRow = outRow + 1
 
-            ' Table header
-            outSheet.Cells(outRow, 1).Value = "Synced Quote"
-            outSheet.Cells(outRow, 2).Value = "Opportunity Name"
-            outSheet.Cells(outRow, 3).Value = "RFQ Received Date"
-            outSheet.Cells(outRow, 4).Value = "Aging (days)"
-            outSheet.Range(outSheet.Cells(outRow, 1), outSheet.Cells(outRow, 4)).Font.Bold = True
-            outSheet.Range(outSheet.Cells(outRow, 1), outSheet.Cells(outRow, 4)).Interior.Color = RGB(200, 200, 200)
-            Dim tableStartRow As Long: tableStartRow = outRow
-            outRow = outRow + 1
+        ' Output table header regardless of data presence
+        With outSheet.Range(outSheet.Cells(outRow, 1), outSheet.Cells(outRow, 4))
+            .Value = Array("Synced Quote", "Opportunity Name", "RFQ Received Date", "Aging (days)")
+            .Font.Bold = True
+            .Interior.Color = RGB(200, 200, 200)
+            .Font.Name = "Century Gothic"
+        End With
 
-            ' Data rows
+        Dim tableStartRow As Long: tableStartRow = outRow
+        outRow = outRow + 1
+
+        ' Output data or "No data" row
             For r = 1 To tempData.Count
                 rowData = tempData(r)
-                outSheet.Cells(outRow, 1).Resize(1, 4).Value = rowData
+                With outSheet.Cells(outRow, 1).Resize(1, 4)
+                    .Value = rowData
+                    .Font.Name = "Century Gothic"
+                    ' Format date column as date
+                    .Cells(1, 3).NumberFormat = "dd-mmm-yyyy"
+                End With
                 outRow = outRow + 1
             Next r
+            
 
-            ' Borders
-            With outSheet.Range(outSheet.Cells(tableStartRow, 1), outSheet.Cells(outRow - 1, 4)).Borders
-                .LineStyle = xlContinuous
-                .Weight = xlThin
-            End With
+        ' Apply borders
+        With outSheet.Range(outSheet.Cells(tableStartRow, 1), outSheet.Cells(outRow - 1, 4)).Borders
+            .LineStyle = xlContinuous
+            .Weight = xlThin
+        End With
 
-            ' === CHART PART ===
+        ' Add chart only if data exists
+        If tempData.Count > 0 Then
             chartCount = chartCount + 1
             Dim chObj As ChartObject
             Set chObj = outSheet.ChartObjects.Add(Left:=500, Width:=350, _
@@ -142,9 +150,10 @@ SkipRow:
             chObj.Chart.Axes(xlValue).AxisTitle.Text = "Aging (days)"
             chObj.Name = "Chart_" & chartCount
             chObj.Chart.SeriesCollection(1).ApplyDataLabels Type:=xlDataLabelsShowValue
-
-            outRow = outRow + 2
         End If
+
+        outRow = outRow + 2
+
 NextSection:
     Next i
 
@@ -152,18 +161,29 @@ NextSection:
     Dim summaryStartCol As Long: summaryStartCol = 7 ' column G
     Dim summaryStartRow As Long: summaryStartRow = 1
 
-    outSheet.Cells(summaryStartRow, summaryStartCol).Value = "Summary"
-    outSheet.Cells(summaryStartRow, summaryStartCol + 1).Value = "Avg Aging Days" ' <--- CHANGED LABEL
-    outSheet.Range(outSheet.Cells(summaryStartRow, summaryStartCol), outSheet.Cells(summaryStartRow, summaryStartCol + 1)).Font.Bold = True
+    With outSheet.Cells(summaryStartRow, summaryStartCol)
+        .Value = "Summary"
+        .Font.Bold = True
+        .Font.Name = "Century Gothic"
+    End With
+    With outSheet.Cells(summaryStartRow, summaryStartCol + 1)
+        .Value = "Count of Projects"
+        .Font.Bold = True
+        .Font.Name = "Century Gothic"
+    End With
     outSheet.Range(outSheet.Cells(summaryStartRow, summaryStartCol), outSheet.Cells(summaryStartRow, summaryStartCol + 1)).Interior.Color = RGB(200, 200, 200)
 
     Dim summaryRow As Long: summaryRow = summaryStartRow + 1
     For i = 0 To UBound(sectionHeaders)
-        If countAging(i) > 0 Then    ' Only if there is at least one value
-            outSheet.Cells(summaryRow, summaryStartCol).Value = sectionHeaders(i)
-            outSheet.Cells(summaryRow, summaryStartCol + 1).Value = Round(sumAging(i) / countAging(i), 2) ' AVGERAGE
-            summaryRow = summaryRow + 1
-        End If
+        With outSheet.Cells(summaryRow, summaryStartCol)
+            .Value = sectionHeaders(i)
+            .Font.Name = "Century Gothic"
+        End With
+        With outSheet.Cells(summaryRow, summaryStartCol + 1)
+            .Value = countAging(i)  ' count, zero if no data
+            .Font.Name = "Century Gothic"
+        End With
+        summaryRow = summaryRow + 1
     Next i
 
     With outSheet.Range(outSheet.Cells(summaryStartRow, summaryStartCol), outSheet.Cells(summaryRow - 1, summaryStartCol + 1)).Borders
@@ -174,7 +194,5 @@ NextSection:
     MsgBox "? Done! Tables + charts saved to 'Extracted Summary'", vbInformation
 
 End Sub
-
-
 
 
