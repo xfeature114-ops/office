@@ -161,13 +161,10 @@ For i = 1 To lastRow
     End If
 Next i
 
-    'Call helperformat
     Call ExtractRFQTables_Summary_WithCharts
-    Call OwnerInsideSales_CountTable_OnlyExpired
     
     
+    ' ---manas patel br---
 
 End Sub
-
-
 
