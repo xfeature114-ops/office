@@ -22,27 +22,36 @@ Sub ExtractRFQTables_Summary_WithCharts()
     End If
     On Error GoTo 0
 
-    ' Find required column positions from row 2
-    Dim colSynced As Long, colOppName As Long, colRFQ As Long, i As Long
-    For i = 1 To ws.Cells(2, ws.Columns.Count).End(xlToLeft).Column
+    ' Find required column positions from row 2 dynamically
+    Dim colSynced As Long, colOppName As Long, colRFQ As Long
+    Dim colCustomerRequest As Long, colInsideSales As Long
+    colSynced = 0: colOppName = 0: colRFQ = 0: colCustomerRequest = 0: colInsideSales = 0
+
+    Dim i As Long, lastCol As Long
+    lastCol = ws.Cells(2, ws.Columns.Count).End(xlToLeft).Column
+    For i = 1 To lastCol
         Select Case LCase(Trim(ws.Cells(2, i).Text))
             Case "synced quote": colSynced = i
             Case "opportunity name": colOppName = i
             Case "rfq received date": colRFQ = i
+            Case "customer request date": colCustomerRequest = i
+            Case "inside_sales": colInsideSales = i
         End Select
     Next i
-    If colSynced = 0 Or colOppName = 0 Or colRFQ = 0 Then
-        MsgBox "? Missing header(s): Synced Quote, Opportunity Name or RFQ Received Date!", vbCritical
+
+    If colSynced = 0 Or colOppName = 0 Or colRFQ = 0 Or colCustomerRequest = 0 Or colInsideSales = 0 Then
+        MsgBox "? Missing header(s): Synced Quote, Opportunity Name, RFQ Received Date, Customer Request Date, or Inside Sales!", vbCritical
         Exit Sub
     End If
 
     Dim outRow As Long: outRow = 1
     Dim lastRow As Long: lastRow = ws.Cells(ws.Rows.Count, 2).End(xlUp).Row
     Dim section As Variant, sectionStart As Long, sectionEnd As Long
-    Dim j As Long, aging As Variant
+    Dim j As Long, agingVal As Variant
     Dim maxAging() As Variant: ReDim maxAging(0 To UBound(sectionHeaders))
     Dim sumAging() As Double: ReDim sumAging(0 To UBound(sectionHeaders))
     Dim countAging() As Long: ReDim countAging(0 To UBound(sectionHeaders))
+    Dim countProjects() As Long: ReDim countProjects(0 To UBound(sectionHeaders)) ' counts opportunity name
 
     Dim tempData As Collection
     Dim rowData As Variant
@@ -75,33 +84,46 @@ Sub ExtractRFQTables_Summary_WithCharts()
         maxAging(i) = 0
         sumAging(i) = 0
         countAging(i) = 0
+        countProjects(i) = 0
 
         ' Collect all rows regardless of RFQ date validity
-        For j = sectionStart + 1 To sectionEnd
+        For j = sectionStart To sectionEnd
             If Application.CountA(ws.Rows(j)) = 0 Then GoTo SkipRow
 
             Dim rfqDateVal As Variant
-            rfqDateVal = ws.Cells(j, colRFQ).Value
+            Dim custReqDateVal As Variant
+            Dim insideSalesVal As Variant
 
-            Dim agingVal As Variant
+            rfqDateVal = ws.Cells(j, colRFQ).Value
+            custReqDateVal = ws.Cells(j, colCustomerRequest).Value
+            insideSalesVal = ws.Cells(j, colInsideSales).Value
+
             If IsDate(rfqDateVal) Then
                 agingVal = Date - CDate(rfqDateVal)
             Else
-                agingVal = ""   ' Could be blank or "N/A"
+                agingVal = ""   ' blank if invalid
             End If
 
-            rowData = Array(ws.Cells(j, colSynced).Value, ws.Cells(j, colOppName).Value, rfqDateVal, agingVal)
+            rowData = Array(ws.Cells(j, colSynced).Value, insideSalesVal, ws.Cells(j, colOppName).Value, _
+                            custReqDateVal, rfqDateVal, agingVal)
             tempData.Add rowData
 
+            ' Update aging stats ONLY for valid RFQ dates
             If IsDate(rfqDateVal) Then
                 If agingVal > maxAging(i) Then maxAging(i) = agingVal
                 sumAging(i) = sumAging(i) + agingVal
                 countAging(i) = countAging(i) + 1
             End If
+
+            ' Count projects based on Opportunity Name presence
+            If Trim(ws.Cells(j, colOppName).Value) <> "" Then
+                countProjects(i) = countProjects(i) + 1
+            End If
+
 SkipRow:
         Next j
 
-        ' Output section header regardless of data
+        ' Output section header regardless
         With outSheet.Cells(outRow, 1)
             .Value = section
             .Font.Bold = True
@@ -110,9 +132,9 @@ SkipRow:
         End With
         outRow = outRow + 1
 
-        ' Output table header regardless of data presence
-        With outSheet.Range(outSheet.Cells(outRow, 1), outSheet.Cells(outRow, 4))
-            .Value = Array("Synced Quote", "Opportunity Name", "RFQ Received Date", "Aging (days)")
+        ' Output table header (6 columns)
+        With outSheet.Range(outSheet.Cells(outRow, 1), outSheet.Cells(outRow, 6))
+            .Value = Array("Synced Quote", "Inside_Sales", "Opportunity Name", "Customer Request Date", "RFQ Received Date", "Aging (days)")
             .Font.Bold = True
             .Interior.Color = RGB(200, 200, 200)
             .Font.Name = "Century Gothic"
@@ -125,14 +147,19 @@ SkipRow:
         If tempData.Count > 0 Then
             For r = 1 To tempData.Count
                 rowData = tempData(r)
-                With outSheet.Cells(outRow, 1).Resize(1, 4)
+                With outSheet.Cells(outRow, 1).Resize(1, 6)
                     .Value = rowData
                     .Font.Name = "Century Gothic"
-                    ' Format RFQ Received Date as date if valid
-                    If IsDate(rowData(2)) Then
-                        .Cells(1, 3).NumberFormat = "dd-mmm-yyyy"
+                    ' Format date columns if valid
+                    If IsDate(rowData(3)) Then
+                        .Cells(1, 4).NumberFormat = "dd-mmm-yyyy"
                     Else
-                        .Cells(1, 3).NumberFormat = "General"
+                        .Cells(1, 4).NumberFormat = "General"
+                    End If
+                    If IsDate(rowData(4)) Then
+                        .Cells(1, 5).NumberFormat = "dd-mmm-yyyy"
+                    Else
+                        .Cells(1, 5).NumberFormat = "General"
                     End If
                 End With
                 outRow = outRow + 1
@@ -145,19 +172,19 @@ SkipRow:
         End If
 
         ' Apply borders
-        With outSheet.Range(outSheet.Cells(tableStartRow, 1), outSheet.Cells(outRow - 1, 4)).Borders
+        With outSheet.Range(outSheet.Cells(tableStartRow, 1), outSheet.Cells(outRow - 1, 6)).Borders
             .LineStyle = xlContinuous
             .Weight = xlThin
         End With
 
-        ' Add chart only if data exists
+        ' Add chart only if data exists (charts start from column P i.e., 16)
         If tempData.Count > 0 Then
             chartCount = chartCount + 1
             Dim chObj As ChartObject
-            Set chObj = outSheet.ChartObjects.Add(Left:=500, Width:=350, _
-                                                  Top:=outSheet.Cells(tableStartRow, 6).Top, Height:=150)
+            Set chObj = outSheet.ChartObjects.Add(Left:=outSheet.Columns(16).Left, Width:=350, _
+                                                  Top:=outSheet.Cells(tableStartRow, 8).Top, Height:=150)
             chObj.Chart.ChartType = xlColumnClustered
-            chObj.Chart.SetSourceData Source:=outSheet.Range(outSheet.Cells(tableStartRow + 1, 4), outSheet.Cells(outRow - 1, 4))
+            chObj.Chart.SetSourceData Source:=outSheet.Range(outSheet.Cells(tableStartRow + 1, 6), outSheet.Cells(outRow - 1, 6))
             chObj.Chart.SeriesCollection(1).XValues = outSheet.Range(outSheet.Cells(tableStartRow + 1, 1), outSheet.Cells(outRow - 1, 1))
             chObj.Chart.HasTitle = True
             chObj.Chart.ChartTitle.Text = section & " - RFQ Aging"
@@ -197,7 +224,7 @@ NextSection:
             .Font.Name = "Century Gothic"
         End With
         With outSheet.Cells(summaryRow, summaryStartCol + 1)
-            .Value = countAging(i)  ' count, zero if no data
+            .Value = countProjects(i)  ' COUNT rows with Opportunity Name filled
             .Font.Name = "Century Gothic"
         End With
         summaryRow = summaryRow + 1
@@ -211,6 +238,5 @@ NextSection:
     MsgBox "? Done! Tables + charts saved to 'Extracted Summary'", vbInformation
 
 End Sub
-
 
 
