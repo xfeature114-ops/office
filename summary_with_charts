@@ -402,6 +402,7 @@ Next i
     ' ---manas patel br---
     
 
+
     MsgBox "? Done! Tables + charts saved to 'Extracted Summary' including this week's RFQs", vbInformation
 
 End Sub
