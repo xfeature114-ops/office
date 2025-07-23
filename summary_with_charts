@@ -134,7 +134,7 @@ SkipRow:
 
         ' Output table header (6 columns)
         With outSheet.Range(outSheet.Cells(outRow, 1), outSheet.Cells(outRow, 6))
-            .Value = Array("Synced Quote", "Inside_Sales", "Opportunity Name", "Customer Request Date", "RFQ Received Date", "Aging (days)")
+            .Value = Array("Synced Quote", "Inside Sales", "Opportunity Name", "Customer Request Date", "RFQ Received Date", "Aging (days)")
             .Font.Bold = True
             .Interior.Color = RGB(200, 200, 200)
             .Font.Name = "Century Gothic"
