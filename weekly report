@@ -32,7 +32,7 @@ Sub FillSheetsFromInput_BySectionName_Selective()
     Set sectionToSheet = CreateObject("Scripting.Dictionary")
     With sectionToSheet
         .Add LCase("Quote preparation"), "Quote Preparation"
-        .Add LCase("Quote review & submission"), "Quote Review"
+        .Add LCase("Quote review & submission"), "Quote review & submission"
         .Add LCase("CBOM"), "CBOM" ' Adjust/Clear if you don't use
     End With
 
@@ -50,7 +50,7 @@ Sub FillSheetsFromInput_BySectionName_Selective()
     For Each tgtSheetName In alwaysCopySheets.Keys
         clearSheetsColl(tgtSheetName) = True
     Next tgtSheetName
-    
+
     ' Add mapped sheets for other section headers
     For Each tgtSheetName In sectionToSheet.Items
         clearSheetsColl(LCase(tgtSheetName)) = True
@@ -187,12 +187,99 @@ Sub FillSheetsFromInput_BySectionName_Selective()
 ContinueLoop:
     Loop
 
+' ======================= Formatting snippet: target specific sheets ======================= -- doesn't work hopefully someone fixes it ( next intern )
+Dim formatSheetNames As Variant
+formatSheetNames = Array("Organise", "Quote Preparation", "Scrub BOM", "KOM", "CBOM", "Quote Review & Submission")
+
+Dim fmtSheetName As Variant
+Dim exactSheetName As String
+
+For Each fmtSheetName In formatSheetNames
+    ' Find sheet in workbook by exact or case-insensitive name
+    exactSheetName = ""
+    For Each targetWS In ThisWorkbook.Worksheets
+        If StrComp(targetWS.Name, fmtSheetName, vbTextCompare) = 0 Then
+            exactSheetName = targetWS.Name
+            Exit For
+        End If
+    Next targetWS
+    
+    If exactSheetName <> "" Then
+        Set targetWS = ThisWorkbook.Sheets(exactSheetName)
+        
+        ' Find last used row in column A
+        Dim lastRow As Long
+        lastRow = targetWS.Cells(targetWS.Rows.Count, 1).End(xlUp).Row
+        
+        '--Manas Patel BR--
+        targetHeaderRow = 1 ' Adjust if your headers are on a different row
+        
+        If lastRow > targetHeaderRow Then
+            ' Find last used column in header row
+            Dim lastCol As Long
+            lastCol = targetWS.Cells(targetHeaderRow, targetWS.Columns.Count).End(xlToLeft).Column
+            
+            If lastCol >= 1 Then
+                Dim dataRng As Range
+                Set dataRng = targetWS.Range(targetWS.Cells(targetHeaderRow + 1, 1), targetWS.Cells(lastRow, lastCol))
+                
+                ' Set font to Century Gothic size 10
+                With dataRng.Font
+                    .Name = "Century Gothic"
+                    .Size = 10
+                End With
+                
+                ' Set horizontal alignment to left
+                dataRng.HorizontalAlignment = xlLeft
+                
+                ' Apply border to all edges explicitly
+                With dataRng.Borders(xlEdgeTop)
+                    .LineStyle = xlContinuous
+                    .Weight = xlThin
+                End With
+                With dataRng.Borders(xlEdgeBottom)
+                    .LineStyle = xlContinuous
+                    .Weight = xlThin
+                End With
+                With dataRng.Borders(xlEdgeLeft)
+                    .LineStyle = xlContinuous
+                    .Weight = xlThin
+                End With
+                With dataRng.Borders(xlEdgeRight)
+                    .LineStyle = xlContinuous
+                    .Weight = xlThin
+                End With
+                With dataRng.Borders(xlInsideVertical)
+                    .LineStyle = xlContinuous
+                    .Weight = xlThin
+                End With
+                With dataRng.Borders(xlInsideHorizontal)
+                    .LineStyle = xlContinuous
+                    .Weight = xlThin
+                End With
+                
+                ' Format date columns as dd-mmm-yy if header contains "date"
+                Dim colIdx As Long
+                For colIdx = 1 To lastCol
+                    Dim headerText As String
+                    headerText = Trim(targetWS.Cells(targetHeaderRow, colIdx).Value)
+                    If InStr(1, LCase(headerText), "date") > 0 Then
+                        targetWS.Range(targetWS.Cells(targetHeaderRow + 1, colIdx), targetWS.Cells(lastRow, colIdx)).NumberFormat = "dd-mmm-yy"
+                    End If
+                Next colIdx
+            End If
+        End If
+    Else
+        ' Sheet not found - optional debug message
+        ' MsgBox "Sheet '" & fmtSheetName & "' not found.", vbExclamation
+    End If
+Next fmtSheetName
+    
     ' RESTORE EXCEL SETTINGS
     Application.EnableEvents = True
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
-
+    
     MsgBox "Data successfully copied to sheets based on section headers.", vbInformation
 End Sub
-
 
