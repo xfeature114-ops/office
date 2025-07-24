@@ -1,0 +1,174 @@
+Sub FillSheetsFromInput_BySectionName()
+    Dim sourceWS As Worksheet
+    Dim lastInputRow As Long, sectionCol As Long: sectionCol = 2
+    Dim r As Long, rowStart As Long, rowEnd As Long
+    Dim inputHeaderRow As Long: inputHeaderRow = 2
+    Dim targetHeaderRow As Long: targetHeaderRow = 1
+    Dim lastInputCol As Long
+    Dim inputHeaders As Object
+    Dim targetHeadersCols() As Variant
+    Dim tgtCol As Long, srcCol As Long, tgtLastCol As Long
+    Dim sectionToSheet As Object
+    Dim sectionNameKey As String
+    Dim tgtSheetName As Variant ' Variant because used in For Each over dictionary items
+    Dim targetWS As Worksheet
+    Dim shtIndex As Long
+    Dim shtNames As Variant
+    Dim currentSectionName As String, currentSectionNameLower As String
+    Dim lastTargetRow As Long
+    Dim pasteRow As Long
+    Dim i As Long
+
+    ' Speed up macro execution
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+    Application.EnableEvents = False
+
+    ' Reference the "Input" sheet
+    Set sourceWS = ThisWorkbook.Sheets("Input")
+
+    ' Find last row and column in the Input sheet
+    lastInputRow = sourceWS.Cells(sourceWS.Rows.Count, sectionCol).End(xlUp).Row
+    lastInputCol = sourceWS.Cells(inputHeaderRow, sourceWS.Columns.Count).End(xlToLeft).Column
+
+    ' Define mapping from section headers to output sheet names (both lowercase keys for case-insensitive)
+    Set sectionToSheet = CreateObject("Scripting.Dictionary")
+    With sectionToSheet
+        .Add LCase("Opportunity Discussion"), "Opportunity Discussion" ' Make sure sheet exists
+        .Add LCase("Organise"), "Organise"
+        .Add LCase("Scrub BOM"), "Scrub BOM"
+        .Add LCase("KOM"), "KOM"
+        .Add LCase("CBOM"), "CBOM" ' Adjust sheet name if needed
+        .Add LCase("Quote preparation"), "Quote Preparation"
+        .Add LCase("Quote review & submission"), "Quote Review"
+        .Add LCase("Negotiation"), "Negotiation" ' Make sure sheet exists or adjust
+        .Add LCase("CBOM Re-work"), "CBOM Re-work" ' Adjust sheet name if needed
+    End With
+
+    ' Retrieve list of target sheet names (unique) from dictionary items to clear before filling
+    shtNames = sectionToSheet.Items
+
+    ' Clear data below headers in all mapped target sheets
+    For Each tgtSheetName In shtNames
+        On Error Resume Next
+        Set targetWS = ThisWorkbook.Sheets(tgtSheetName)
+        If Not targetWS Is Nothing Then
+            targetWS.Rows(targetHeaderRow + 1 & ":" & targetWS.Rows.Count).ClearContents
+        End If
+        On Error GoTo 0
+    Next tgtSheetName
+
+    ' Build dictionary of Input headers (uppercase) -> column number for case-insensitive matching
+    Set inputHeaders = CreateObject("Scripting.Dictionary")
+    For srcCol = 1 To lastInputCol
+        Dim hdr As String
+        hdr = Trim(sourceWS.Cells(inputHeaderRow, srcCol).Value)
+        If hdr <> "" Then
+            inputHeaders(UCase(hdr)) = srcCol
+        End If
+    Next srcCol
+
+    ' Initialize a dictionary to hold header mappings per sheet (sheet name -> array of mapped columns)
+    Dim headerMappings As Object
+    Set headerMappings = CreateObject("Scripting.Dictionary")
+
+    ' Start processing from row after Input headers (row 3)
+    r = inputHeaderRow + 1
+
+    Do While r <= lastInputRow
+        currentSectionName = Trim(sourceWS.Cells(r, sectionCol).Value)
+        currentSectionNameLower = LCase(currentSectionName)
+
+        ' Check if row is a section header (not empty and not subtotal)
+        If currentSectionName <> "" And Not currentSectionNameLower Like "*subtotal*" Then
+            rowStart = r
+
+            ' Find end of section (just before next subtotal or different section header)
+            rowEnd = rowStart
+            Do While rowEnd <= lastInputRow
+                Dim nextVal As String
+                nextVal = Trim(sourceWS.Cells(rowEnd, sectionCol).Value)
+
+                If (rowEnd > rowStart) Then
+                    If nextVal <> "" Then
+                        If LCase(nextVal) Like "*subtotal*" Or nextVal <> currentSectionName Then
+                            rowEnd = rowEnd - 1
+                            Exit Do
+                        End If
+                    End If
+                End If
+
+                rowEnd = rowEnd + 1
+            Loop
+            If rowEnd > lastInputRow Then rowEnd = lastInputRow
+
+            ' Get the target sheet for this section header
+            If sectionToSheet.Exists(currentSectionNameLower) Then
+                tgtSheetName = sectionToSheet(currentSectionNameLower)
+
+                On Error Resume Next
+                Set targetWS = ThisWorkbook.Sheets(tgtSheetName)
+                If targetWS Is Nothing Then
+                    MsgBox "Sheet '" & tgtSheetName & "' corresponding to section '" & currentSectionName & "' not found.", vbExclamation
+                    On Error GoTo 0
+                    r = rowEnd + 1 ' Move to next section
+                    GoTo ContinueLoop
+                End If
+                On Error GoTo 0
+
+                ' Build header mapping once per sheet: target header col ? input column number
+                If Not headerMappings.Exists(tgtSheetName) Then
+                    Dim tgtLastCol_Local As Long
+                    tgtLastCol_Local = targetWS.Cells(targetHeaderRow, targetWS.Columns.Count).End(xlToLeft).Column
+                    ReDim targetHeadersCols(1 To tgtLastCol_Local)
+
+                    For tgtCol = 1 To tgtLastCol_Local
+                        Dim tgtHdr As String
+                        tgtHdr = Trim(targetWS.Cells(targetHeaderRow, tgtCol).Value)
+
+                        If tgtHdr <> "" And inputHeaders.Exists(UCase(tgtHdr)) Then
+                            targetHeadersCols(tgtCol) = inputHeaders(UCase(tgtHdr))
+                        Else
+                            targetHeadersCols(tgtCol) = 0 ' No matching input header
+                        End If
+                    Next tgtCol
+
+                    headerMappings.Add tgtSheetName, targetHeadersCols
+                Else
+                    targetHeadersCols = headerMappings(tgtSheetName)
+                    tgtLastCol_Local = UBound(targetHeadersCols)
+                End If
+
+                ' Find last filled row to append data in target sheet
+                lastTargetRow = targetWS.Cells(targetWS.Rows.Count, 1).End(xlUp).Row
+                If lastTargetRow < targetHeaderRow Then lastTargetRow = targetHeaderRow
+
+                ' Paste rows from section only to the matched target sheet
+                For i = rowStart To rowEnd
+                    pasteRow = lastTargetRow + 1
+
+                    For tgtCol = 1 To tgtLastCol_Local
+                        srcCol = targetHeadersCols(tgtCol)
+                        If srcCol > 0 Then
+                            targetWS.Cells(pasteRow, tgtCol).Value = sourceWS.Cells(i, srcCol).Value
+                        End If
+                    Next tgtCol
+
+                    lastTargetRow = pasteRow
+                Next i
+            End If
+ContinueLoop:
+            r = rowEnd + 1
+        Else
+            r = r + 1
+        End If
+    Loop
+
+    ' Restore Excel settings
+    Application.EnableEvents = True
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+
+    MsgBox "Data has been copied to respective sheets based on section headers.", vbInformation
+End Sub
+
