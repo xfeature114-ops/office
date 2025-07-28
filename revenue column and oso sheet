@@ -1,0 +1,233 @@
+Sub Major2_CopyRevenueColumns()
+    Dim sourceWb As Workbook
+    Dim sourceWs As Worksheet
+    Dim tgtWs As Worksheet
+    Dim lastRow As Long
+    Dim tgtLastRow As Long
+    Dim tgtRow As Long
+    Dim sourceFile As Variant
+    Dim sheetName As String
+    Dim copyRowCount As Long
+    Dim copyStartRow As Long
+    Dim copyEndRow As Long
+
+    ' Prompt user to select the source workbook
+    sourceFile = Application.GetOpenFilename("Excel Files (*.xls*),*.xls*", , "Select source workbook")
+    If sourceFile = False Then Exit Sub  ' User cancelled
+
+    ' Open the source workbook
+    Set sourceWb = Workbooks.Open(sourceFile)
+    On Error Resume Next
+    Set sourceWs = sourceWb.Sheets("Revenue $M")
+    On Error GoTo 0
+
+    If sourceWs Is Nothing Then
+        MsgBox "Sheet 'Revenue $M' not found.", vbExclamation
+        sourceWb.Close False
+        Exit Sub
+    End If
+
+    ' Find the last row with data in column A of source sheet
+    lastRow = sourceWs.Cells(sourceWs.Rows.Count, "A").End(xlUp).Row
+
+    ' Define copying range: from row 6 to lastRow - 1 (exclude last row as grand total)
+    copyStartRow = 6
+    copyEndRow = lastRow - 1
+
+    copyRowCount = copyEndRow - copyStartRow + 1
+
+    ' Check if there is data to copy after excluding grand total
+    If copyRowCount <= 0 Then
+        MsgBox "No data to copy from row 6 down excluding grand total.", vbExclamation
+        sourceWb.Close False
+        Exit Sub
+    End If
+
+    ' Set target worksheet as the active sheet
+    Set tgtWs = ThisWorkbook.ActiveSheet
+    tgtRow = 84
+
+    ' Find last used row in columns S, T, U in target sheet for clearing
+    tgtLastRow = Application.Max( _
+        tgtWs.Cells(tgtWs.Rows.Count, "S").End(xlUp).Row, _
+        tgtWs.Cells(tgtWs.Rows.Count, "T").End(xlUp).Row, _
+        tgtWs.Cells(tgtWs.Rows.Count, "U").End(xlUp).Row)
+
+    ' Adjust tgtLastRow if it is less than tgtRow (84)
+    If tgtLastRow < tgtRow Then tgtLastRow = tgtRow - 1
+
+    ' Clear existing data in columns S:U from row 84 to tgtLastRow
+    If tgtLastRow >= tgtRow Then
+        tgtWs.Range(tgtWs.Cells(tgtRow, "S"), tgtWs.Cells(tgtLastRow, "U")).ClearContents
+    End If
+
+    ' Copy values only from columns A, D, and E starting at row 6 up to lastRow - 1 in source sheet
+    tgtWs.Range(tgtWs.Cells(tgtRow, "S"), tgtWs.Cells(tgtRow + copyRowCount - 1, "S")).Value = _
+        sourceWs.Range("A" & copyStartRow & ":A" & copyEndRow).Value
+
+    tgtWs.Range(tgtWs.Cells(tgtRow, "T"), tgtWs.Cells(tgtRow + copyRowCount - 1, "T")).Value = _
+        sourceWs.Range("D" & copyStartRow & ":D" & copyEndRow).Value
+
+    tgtWs.Range(tgtWs.Cells(tgtRow, "U"), tgtWs.Cells(tgtRow + copyRowCount - 1, "U")).Value = _
+        sourceWs.Range("E" & copyStartRow & ":E" & copyEndRow).Value
+
+    ' Store the sheet name before closing the source workbook
+    sheetName = sourceWs.Name
+
+    ' Close the source workbook without saving
+    sourceWb.Close False
+
+    MsgBox "Data copied successfully (excluding grand total) from '" & sheetName & "'."
+    Call ApplyNameMapping
+    
+End Sub
+
+
+Sub ApplyNameMapping()
+    Dim wsActive As Worksheet
+    Dim wsMapping As Worksheet
+    Dim lastRow As Long, i As Long
+    Dim mappingRange As Range, cell As Range
+    Dim lookupValue As Variant
+    Dim matchRow As Variant
+
+    Set wsActive = ActiveSheet
+    Set wsMapping = ThisWorkbook.Sheets("mapping")
+
+    ' Find last used row in column S
+    lastRow = wsActive.Cells(wsActive.Rows.Count, "S").End(xlUp).Row
+    ' Define mapping range (columns A and B in mapping sheet)
+    Set mappingRange = wsMapping.Range("A:B")
+    
+    ' Iterate from S84 to the last row in S
+    For i = 84 To lastRow
+        lookupValue = wsActive.Cells(i, "S").Value
+        If Not IsEmpty(lookupValue) Then
+            ' Find match in column 2 (B) of mapping sheet
+            matchRow = Application.Match(lookupValue, wsMapping.Columns(2), 0)
+            If Not IsError(matchRow) Then
+                ' Replace value in R with corresponding name from column 1 (A)
+                wsActive.Cells(i, "R").Value = wsMapping.Cells(matchRow, "A").Value
+            End If
+        End If
+    Next i
+    Call AddTodayColumnWithCustomVLookup
+End Sub
+Sub AddTodayColumnWithCustomVLookup()
+    Dim ws As Worksheet
+    Dim deltaCol As Long, lastCol As Long
+    Dim i As Long
+    Const tableStart As Long = 16
+    Const tableEnd As Long = 40
+    Dim vlookupTargetSheet As String
+    Dim todayHeader As String
+
+    '--- ALWAYS work on the specified sheet ---
+    Set ws = ThisWorkbook.Sheets("OSO analysis")  ' Exact sheet name as per your instruction
+
+    vlookupTargetSheet = "AOP Tracking_July'2025" ' Adjust if needed
+
+    '--- Find "delta" column in row 15 ---
+    lastCol = ws.Cells(15, ws.Columns.Count).End(xlToLeft).Column
+    For deltaCol = 1 To lastCol
+        If LCase(ws.Cells(15, deltaCol).Value) = "delta" Then Exit For
+    Next deltaCol
+
+    '--- Insert new column before "delta" ---
+    ws.Columns(deltaCol).Insert Shift:=xlToRight
+
+    '--- Add "today" in row 15 ---
+    ws.Cells(15, deltaCol).Value = "today"
+
+    '--- Add "OSO as on [today's date]" in row 14 above the new column ---
+    todayHeader = "OSO as on " & Format(Date, "dd-mmm-yyyy")
+    ws.Cells(14, deltaCol).Value = todayHeader
+
+    '--- Add VLOOKUP formula for each row (16 to 40) ---
+    For i = tableStart To tableEnd
+        ws.Cells(i, deltaCol).Formula = "=VLOOKUP(H" & i & ",'AOP Tracking_July''2025'!B11:S68,18,0)"
+    Next i
+
+    MsgBox "Today column and header added!"
+
+    Call SumLastWeekNetLineAmount
+End Sub
+Sub SumLastWeekNetLineAmount()
+    Dim wsEMS As Worksheet, wsOSO As Worksheet, wsAOP As Worksheet
+    Dim c As Long
+
+    ' Use the current sheet you run from as the AOP sheet (could be AOP Tracking_July'2025 or another month)
+    Set wsAOP = ActiveSheet
+    Set wsEMS = ThisWorkbook.Sheets("EMS Invoice Details")
+    Set wsOSO = ThisWorkbook.Sheets("OSO analysis")
+
+    ' Find columns in EMS Invoice Details
+    Dim lastCol As Long
+    lastCol = wsEMS.Cells(4, wsEMS.Columns.Count).End(xlToLeft).Column
+    Dim dateCol As Long, netAmtCol As Long
+    dateCol = 0
+    netAmtCol = 0
+    For c = 1 To lastCol
+        If Trim(wsEMS.Cells(4, c).Value) = "Invoice Date" Then dateCol = c
+        If Trim(wsEMS.Cells(4, c).Value) = "Net Line Amount In USD" Then netAmtCol = c
+    Next c
+    If dateCol = 0 Or netAmtCol = 0 Then
+        MsgBox "Headers not found in EMS Invoice Details."
+        Exit Sub
+    End If
+
+    ' Automatically get last week's Monday to Saturday
+    Dim today As Date, startDate As Date, endDate As Date
+    today = Date
+    Dim wd As Integer: wd = Weekday(today, vbMonday)
+    If wd = 1 Then
+        startDate = today - 7
+    Else
+        startDate = today - wd - 5
+    End If
+    endDate = startDate + 5
+    '---manas patel br---
+    ' Sum Net Line Amount in EMS Invoice Details sheet
+    Dim lastRow As Long: lastRow = wsEMS.Cells(wsEMS.Rows.Count, dateCol).End(xlUp).Row
+    Dim total As Double: total = 0
+    Dim i As Long
+    For i = 5 To lastRow
+        If IsDate(wsEMS.Cells(i, dateCol).Value) Then
+            Dim invDate As Date
+            invDate = wsEMS.Cells(i, dateCol).Value
+            If invDate >= startDate And invDate <= endDate Then
+                total = total + wsEMS.Cells(i, netAmtCol).Value
+            End If
+        End If
+    Next i
+
+    ' Find "today" column in OSO analysis (row 15)
+    Dim lastColOSO As Long, todayCol As Long
+    lastColOSO = wsOSO.Cells(15, wsOSO.Columns.Count).End(xlToLeft).Column
+    todayCol = 0
+    For c = 1 To lastColOSO
+        If Trim(wsOSO.Cells(15, c).Value) = "today" Then
+            todayCol = c
+            Exit For
+        End If
+    Next c
+    If todayCol = 0 Then
+        MsgBox """today"" header not found in row 15 of OSO analysis."
+        Exit Sub
+    End If
+
+    ' 1. Paste EMS Net Line Amount sum (divided by 1,000,000) in row 11 of OSO analysis
+    wsOSO.Cells(11, todayCol).Value = total / 10 ^ 6
+
+    ' 2. Sum G80+H80 from ACTIVE sheet, paste in row 10 of OSO analysis
+    wsOSO.Cells(10, todayCol).Value = wsAOP.Range("G80").Value + wsAOP.Range("H80").Value
+
+    ' 3. Sum G80:P80 from ACTIVE sheet, paste in row 9 of OSO analysis
+    wsOSO.Cells(13, todayCol).Value = Application.WorksheetFunction.Sum(wsAOP.Range("G80:P80"))
+    
+    ' 4. Sum of Y13 and Y11, in OSO sheet
+    wsOSO.Cells(9, todayCol).Value = wsOSO.Range("Y13").Value + wsOSO.Range("Y11").Value
+
+
+End Sub
+
