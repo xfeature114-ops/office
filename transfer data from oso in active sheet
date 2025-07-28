@@ -1,0 +1,233 @@
+Option Explicit
+Sub Major1_TransferPivotData()
+
+    ' ====== USER CONFIGURABLE ROW NUMBERS ======
+    Const hdrRow As Long = 82          ' quarter / "row labels" headers row
+    Const statRow As Long = 83         ' "po available" / "po not available" row
+    Const dataStartRow As Long = 84    ' first row for project names and data
+    Const colFirst As Long = 6         ' F
+    Const colLast As Long = 16         ' P
+    ' ===========================================
+
+    Dim salesWB As Workbook, salesWS As Worksheet
+    Dim fd As FileDialog, osoWB As Workbook, dataWS As Worksheet
+    Dim srcRng As Range, pvtWS As Worksheet, pc As PivotCache, pvt As PivotTable
+    Dim projList As Object, qtrList As Object
+    Dim headerAvail As Object, headerNot As Object, usedQtrs As Object
+    Dim rowLblCol As Long, j As Long
+    Dim hdrCell As String, statCell As String, qKey As String
+    Dim proj As Variant, qtr As Variant, poAvailVal As Variant, poNotAvailVal As Variant, stat As Variant
+
+    Dim pi As PivotItem, dataRow As Long
+    Dim stripSuffixPo As Boolean
+
+    stripSuffixPo = True  ' headers end with " po"
+
+    Set salesWB = ThisWorkbook
+    Set salesWS = salesWB.ActiveSheet   ' Change if you want to target a specific sheet
+
+    ' ===== Pick the OSO source file =====
+    Set fd = Application.FileDialog(msoFileDialogFilePicker)
+    fd.Title = "Select OSO file"
+    fd.Filters.Clear
+    fd.Filters.Add "Excel files", "*.xls*"
+    If fd.Show <> -1 Then Exit Sub    ' User cancelled
+
+    Application.ScreenUpdating = False
+    Application.DisplayAlerts = False
+
+    Set osoWB = Workbooks.Open(fd.SelectedItems(1), ReadOnly:=True)
+    On Error Resume Next
+    Set dataWS = osoWB.Sheets("Data")   ' Ensure correct sheet name and case
+    On Error GoTo 0
+    If dataWS Is Nothing Then
+        MsgBox "'Data' sheet not found in OSO file.", vbExclamation
+        GoTo Cleanup
+    End If
+
+    ' Define source data range for the pivot
+    With dataWS
+        Set srcRng = .Range(.Cells(1, 1), .Cells(.Cells(.Rows.Count, 1).End(xlUp).Row, .Cells(1, .Columns.Count).End(xlToLeft).Column))
+    End With
+
+    ' Delete existing TempPivot if any
+    On Error Resume Next
+    Set pvtWS = osoWB.Sheets("TempPivot")
+    If Not pvtWS Is Nothing Then pvtWS.Delete
+    On Error GoTo 0
+
+    ' Create TempPivot sheet and pivot table
+    Set pvtWS = osoWB.Sheets.Add(After:=osoWB.Sheets(osoWB.Sheets.Count))
+    pvtWS.Name = "TempPivot"
+    Set pc = osoWB.PivotCaches.Create(xlDatabase, srcRng)
+    Set pvt = pc.CreatePivotTable(pvtWS.Range("A1"), "Tmp")
+    With pvt
+        .PivotFields("project name").Orientation = xlRowField
+        .PivotFields("qtr_1").Orientation = xlColumnField
+        .PivotFields("po availability").Orientation = xlColumnField
+        .AddDataField .PivotFields("Value_in_USD"), "SumUSD", xlSum
+    End With
+
+    ' ---- Create PivotDataDump for verification ----
+    Dim dumpWS As Worksheet, dumpColDict As Object
+    Dim dumpKey As String, dCol As Long, dRow As Long
+    On Error Resume Next
+    Set dumpWS = salesWB.Sheets("PivotDataDump")
+    If Not dumpWS Is Nothing Then dumpWS.Delete
+    On Error GoTo 0
+    Set dumpWS = salesWB.Sheets.Add(After:=salesWB.Sheets(salesWB.Sheets.Count))
+    dumpWS.Name = "PivotDataDump"
+
+    ' Collect unique project names, quarters, statuses from pivot
+    Set projList = CreateObject("System.Collections.ArrayList")
+    For Each pi In pvt.PivotFields("project name").PivotItems
+        If LCase(pi.Name) <> "grand total" Then projList.Add pi.Name
+    Next
+    Set qtrList = CreateObject("Scripting.Dictionary")
+    For Each pi In pvt.PivotFields("qtr_1").PivotItems
+        If LCase(pi.Name) <> "grand total" Then qtrList(pi.Name) = pi.Name
+    Next
+    Dim statList As Object: Set statList = CreateObject("Scripting.Dictionary")
+    For Each pi In pvt.PivotFields("po availability").PivotItems
+        If LCase(pi.Name) <> "grand total" Then statList(LCase(pi.Name)) = pi.Name
+    Next
+
+    ' Dump header row
+    dumpWS.Cells(1, 1).Value = "Project"
+    Set dumpColDict = CreateObject("Scripting.Dictionary")
+    dCol = 2
+    For Each qtr In qtrList.Keys
+        For Each stat In statList.Keys
+            dumpKey = LCase(qtr) & "|" & stat
+            dumpColDict(dumpKey) = dCol
+            dumpWS.Cells(1, dCol).Value = qtr & " | " & statList(stat)
+            dCol = dCol + 1
+        Next stat
+    Next qtr
+
+    ' Dump data rows
+    dRow = 2
+    For Each proj In projList
+        dumpWS.Cells(dRow, 1).Value = proj
+        For Each qtr In qtrList.Keys
+            For Each stat In statList.Keys
+                On Error Resume Next
+                poAvailVal = pvt.GetPivotData("SumUSD", _
+                              "project name", proj, _
+                              "qtr_1", qtr, _
+                              "po availability", statList(stat))
+                If Err.Number <> 0 Then poAvailVal = Empty: Err.Clear
+                On Error GoTo 0
+                If IsNumeric(poAvailVal) Then
+                    dumpWS.Cells(dRow, dumpColDict(LCase(qtr) & "|" & stat)).Value = poAvailVal
+                Else
+                    dumpWS.Cells(dRow, dumpColDict(LCase(qtr) & "|" & stat)).ClearContents
+                End If
+            Next stat
+        Next qtr
+        dRow = dRow + 1
+    Next
+
+    dumpWS.Columns.AutoFit
+
+    ' ---- Map Sales Tracker headers (PO Available and PO Not Available columns) ----
+    Set headerAvail = CreateObject("Scripting.Dictionary")
+    Set headerNot = CreateObject("Scripting.Dictionary")
+    Set usedQtrs = CreateObject("Scripting.Dictionary")
+
+    rowLblCol = 0
+    ' ***** ONLY LOOK AT F:P COLUMNS *****
+    For j = colFirst To colLast
+        hdrCell = Trim(salesWS.Cells(hdrRow, j).Value)
+        statCell = LCase(Trim(salesWS.Cells(statRow, j).Value))
+
+        ' Strip trailing " po" suffix from headers before matching
+        If stripSuffixPo And LCase(Right(hdrCell, 3)) = " po" Then
+            hdrCell = Trim(Left(hdrCell, Len(hdrCell) - 3))
+        End If
+
+        If LCase(hdrCell) = "row labels" Then
+            rowLblCol = j
+        ElseIf hdrCell <> "" And statCell = "po available" Then
+            If Not usedQtrs.Exists(LCase(hdrCell)) Then
+                headerAvail(LCase(hdrCell)) = j
+                headerNot(LCase(hdrCell)) = j + 1    ' PO Not Available in adjacent column to the right
+                usedQtrs(LCase(hdrCell)) = True
+            End If
+        End If
+    Next j
+
+    If rowLblCol = 0 Then
+        MsgBox "'row labels' header missing in row " & hdrRow & " and columns F to P", vbExclamation
+        GoTo Cleanup
+    End If
+
+    ' Clear old data (from dataStartRow down) but only F:P columns and only used rows
+    Dim lastDataRow As Long
+    lastDataRow = dataStartRow + projList.Count - 1
+    With salesWS.Range(salesWS.Cells(dataStartRow, colFirst), salesWS.Cells(lastDataRow, colLast))
+        .UnMerge
+        .ClearContents
+    End With
+
+    ' Write project names beginning in dataStartRow under "row labels" column (IF col is between F and P!)
+    If rowLblCol >= colFirst And rowLblCol <= colLast Then
+        For j = 0 To projList.Count - 1
+            dataRow = dataStartRow + j
+            salesWS.Cells(dataRow, rowLblCol).Value = projList(j)
+        Next j
+    End If
+    '---manas patel br---
+    ' Write values: PO Available in matched column (if in F:P), PO Not Available in adjacent column (if in F:P)
+    For j = 0 To projList.Count - 1
+        proj = projList(j)
+        dataRow = dataStartRow + j
+        For Each qtr In qtrList.Keys
+            qKey = LCase(qtr)
+            If headerAvail.Exists(qKey) Then
+                Dim availCol As Long, notCol As Long
+                availCol = headerAvail(qKey)
+                notCol = headerNot(qKey)
+                ' Only write if in F:P!
+                If availCol >= colFirst And availCol <= colLast Then
+                    ' PO Available
+                    On Error Resume Next
+                    poAvailVal = pvt.GetPivotData("SumUSD", "project name", proj, _
+                                  "qtr_1", qtr, "po availability", "po available")
+                    If Err.Number <> 0 Then poAvailVal = Empty: Err.Clear
+                    On Error GoTo 0
+                    If IsNumeric(poAvailVal) And poAvailVal <> 0 Then
+                        salesWS.Cells(dataRow, availCol).Value = "$" & Format(poAvailVal / 1000000, "0.00")
+                    Else
+                        salesWS.Cells(dataRow, availCol).ClearContents
+                    End If
+                End If
+
+                If notCol >= colFirst And notCol <= colLast Then
+                    ' PO Not Available (in adjacent column)
+                    On Error Resume Next
+                    poNotAvailVal = pvt.GetPivotData("SumUSD", "project name", proj, _
+                                     "qtr_1", qtr, "po availability", "po not available")
+                    If Err.Number <> 0 Then poNotAvailVal = Empty: Err.Clear
+                    On Error GoTo 0
+                    If IsNumeric(poNotAvailVal) And poNotAvailVal <> 0 Then
+                        salesWS.Cells(dataRow, notCol).Value = "$" & Format(poNotAvailVal / 1000000, "0.00")
+                    Else
+                        salesWS.Cells(dataRow, notCol).ClearContents
+                    End If
+                End If
+            End If
+        Next qtr
+    Next j
+
+    MsgBox "Data transfer complete. Check 'PivotDataDump' sheet for raw pivot data.", vbInformation
+
+Cleanup:
+    On Error Resume Next
+    If Not pvtWS Is Nothing Then pvtWS.Delete
+    If Not osoWB Is Nothing Then osoWB.Close SaveChanges:=False
+    Application.DisplayAlerts = True
+    Application.ScreenUpdating = True
+End Sub
+
+
