@@ -1,0 +1,344 @@
+Sub UpdateBPName_FixedRange_CreatePivot_AppendWithSaleInUsdM()
+    Dim wsData As Worksheet
+    Dim wsPivot As Worksheet
+    Dim targetWb As Workbook
+    Dim targetWs As Worksheet
+    Dim lastRow As Long, lastCol As Long, firstDataRow As Long
+    Dim i As Long, j As Long, col As Long
+    Dim ptCache As PivotCache
+    Dim pt As PivotTable
+    Dim dataRange As Range
+    Dim headerDict As Object
+    Dim headerVal As String
+    Dim filterField As String, valueField As String
+    Dim rowField1 As String, rowField2 As String
+    Dim filterCol As Long, valueCol As Long, rowCol1 As Long, rowCol2 As Long
+    Dim sourceDataAddress As String
+    Dim itemCodeCol As Long, bpNameCol As Long
+
+    Dim revHeaderRow As Long
+    revHeaderRow = 5 ' Header row in "Revenue $M" sheet
+
+    Application.ScreenUpdating = False
+
+    Set wsData = ActiveSheet
+
+    ' Define fixed data columns and header row
+    firstDataRow = 4 ' Header row 4 in data sheet
+    itemCodeCol = 12 ' Column L (Item Code)
+    bpNameCol = 6    ' Column F (BP Name)
+
+    ' Determine last row based on column W (col 23)
+    lastRow = wsData.Cells(wsData.Rows.Count, 23).End(xlUp).Row
+    lastCol = 23 ' Column W
+
+    ' --- Check for blank headers in row 4 columns B:W ---
+    For j = 2 To lastCol
+        If Trim(wsData.Cells(firstDataRow, j).Value) = "" Then
+            MsgBox "Blank header found in cell " & wsData.Cells(firstDataRow, j).Address & vbCrLf & _
+                   "Please fill all headers in row 4 (columns B to W) before running the macro.", vbCritical
+            Exit Sub
+        End If
+    Next j
+
+    ' --- Part 1: Update BP Names based on Item Code in column L ---
+    For i = firstDataRow + 1 To lastRow
+        Dim itemValue As String
+        itemValue = LCase(wsData.Cells(i, itemCodeCol).Value)
+
+        If InStr(itemValue, "dtr") > 0 Then
+            wsData.Cells(i, bpNameCol).Value = "Alstom DMRC"
+        ElseIf InStr(itemValue, "nh0") > 0 Then
+            wsData.Cells(i, bpNameCol).Value = "Alstom CMRL"
+        End If
+    Next i
+
+    ' --- Part 2: Create Pivot Table ---
+
+    Set headerDict = CreateObject("Scripting.Dictionary")
+    For col = 2 To lastCol
+        headerVal = LCase(Trim(wsData.Cells(firstDataRow, col).Value))
+        headerDict(headerVal) = col
+    Next col
+
+    filterField = "invoice currency"
+    valueField = "net line amount in usd"
+    rowField1 = "bp name"
+    rowField2 = "invoice to bp"
+
+    ' Validate columns existence
+    If Not headerDict.Exists(LCase(filterField)) _
+       Or Not headerDict.Exists(LCase(valueField)) _
+       Or Not headerDict.Exists(LCase(rowField1)) _
+       Or Not headerDict.Exists(LCase(rowField2)) Then
+        MsgBox "One or more required headers not found in columns B to W:" & vbCrLf & _
+               filterField & vbCrLf & valueField & vbCrLf & rowField1 & vbCrLf & rowField2, vbCritical
+        Exit Sub
+    End If
+
+    filterCol = headerDict(LCase(filterField))
+    valueCol = headerDict(LCase(valueField))
+    rowCol1 = headerDict(LCase(rowField1))
+    rowCol2 = headerDict(LCase(rowField2))
+
+    Set dataRange = wsData.Range(wsData.Cells(firstDataRow, 2), wsData.Cells(lastRow, lastCol))
+
+    Application.DisplayAlerts = False
+    On Error Resume Next
+    Worksheets("Pivot Table").Delete
+    On Error GoTo 0
+    Application.DisplayAlerts = True
+
+    Set wsPivot = Worksheets.Add
+    wsPivot.Name = "Pivot Table"
+
+    sourceDataAddress = "'" & wsData.Name & "'!" & dataRange.Address(ReferenceStyle:=xlA1)
+    Set ptCache = ThisWorkbook.PivotCaches.Create(SourceType:=xlDatabase, SourceData:=sourceDataAddress)
+
+    wsPivot.Activate
+
+    Set pt = ptCache.CreatePivotTable(TableDestination:=wsPivot.Range("A3"), TableName:="PivotTable1")
+
+    ' Configure row fields
+    With pt.PivotFields(wsData.Cells(firstDataRow, rowCol1).Value)
+        .Orientation = xlRowField
+        .Position = 1
+        .Subtotals = Array(False, False, False, False, False, False, False, False, False, False, False, False)
+        .RepeatLabels = True
+    End With
+
+    With pt.PivotFields(wsData.Cells(firstDataRow, rowCol2).Value)
+        .Orientation = xlRowField
+        .Position = 2
+        .Subtotals = Array(False, False, False, False, False, False, False, False, False, False, False, False)
+        .RepeatLabels = True
+    End With
+
+    pt.RowAxisLayout xlTabularRow
+
+    ' Configure filter field
+    With pt.PivotFields(wsData.Cells(firstDataRow, filterCol).Value)
+        .Orientation = xlPageField
+        .Position = 1
+    End With
+
+    ' Configure value field
+    pt.AddDataField pt.PivotFields(wsData.Cells(firstDataRow, valueCol).Value), _
+                    "Sum of Net Line Amount In USD", xlSum
+
+    wsPivot.Columns.AutoFit
+
+    ' --- Part 3: Export data to another workbook ---
+
+    Dim fd As FileDialog
+    Set fd = Application.FileDialog(msoFileDialogOpen)
+    With fd
+        .Title = "Select the Excel file to export pivot data to"
+        .Filters.Clear
+        .Filters.Add "Excel Files", "*.xls;*.xlsx;*.xlsm;*.xlsb", 1
+        .AllowMultiSelect = False
+        If .Show <> -1 Then
+            MsgBox "No file selected. Export cancelled.", vbExclamation
+            Application.ScreenUpdating = True
+            Exit Sub
+        End If
+    End With
+
+    Set targetWb = Workbooks.Open(fd.SelectedItems(1))
+
+    On Error Resume Next
+    Set targetWs = targetWb.Worksheets("Revenue $M")
+    On Error GoTo 0
+
+    If targetWs Is Nothing Then
+        Set targetWs = targetWb.Worksheets.Add
+        targetWs.Name = "Revenue $M"
+    End If
+
+    ' Detect last used row before appending
+    Dim lastUsedRow As Long
+    lastUsedRow = targetWs.Cells(targetWs.Rows.Count, 1).End(xlUp).Row
+
+    ' Get pivot data range excluding pivot Grand Total rows
+    Dim ptDataRange As Range
+    Set ptDataRange = pt.TableRange1
+    Dim ptHeaderRow As Long
+    ptHeaderRow = ptDataRange.Row
+
+    Dim ptHeaderDict As Object
+    Set ptHeaderDict = CreateObject("Scripting.Dictionary")
+    Dim lastPivotCol As Long
+    lastPivotCol = ptDataRange.Columns.Count
+    Dim c As Long
+    Dim headerText As String
+
+    For c = 1 To lastPivotCol
+        headerText = LCase(Trim(wsPivot.Cells(ptHeaderRow, ptDataRange.Column + c - 1).Value))
+        If Not ptHeaderDict.Exists(headerText) Then
+            ptHeaderDict(headerText) = c
+        End If
+    Next c
+
+    ' Determine pivot first header ("bp name" or "row labels")
+    Dim firstPivotHeader As String
+    If ptHeaderDict.Exists("bp name") Then
+        firstPivotHeader = "bp name"
+    ElseIf ptHeaderDict.Exists("row labels") Then
+        firstPivotHeader = "row labels"
+    Else
+        MsgBox "Could not find BP Name or Row Labels in Pivot Table headers.", vbCritical
+        Exit Sub
+    End If
+
+    Dim pivotHeaders As Variant
+    Dim revenueHeaders As Variant
+
+    pivotHeaders = Array(firstPivotHeader, "invoice to bp", "sum of net line amount in usd")
+    revenueHeaders = Array("row labels", "invoice to bp", "sum of net line amount in usd")
+
+    ' Build Revenue $M header dictionary
+    Dim revHeaderDict As Object
+    Set revHeaderDict = CreateObject("Scripting.Dictionary")
+    Dim lastRevCol As Long
+    lastRevCol = targetWs.Cells(revHeaderRow, targetWs.Columns.Count).End(xlToLeft).Column
+    For col = 1 To lastRevCol
+        headerText = LCase(Trim(targetWs.Cells(revHeaderRow, col).Value))
+        If Not revHeaderDict.Exists(headerText) Then
+            revHeaderDict(headerText) = col
+        End If
+    Next col
+
+    ' Validate Revenue $M headers exist
+    For i = LBound(revenueHeaders) To UBound(revenueHeaders)
+        If Not revHeaderDict.Exists(revenueHeaders(i)) Then
+            MsgBox "Required header '" & revenueHeaders(i) & "' not found in 'Revenue $M' header row " & revHeaderRow, vbCritical
+            Exit Sub
+        End If
+    Next i
+
+    ' Append pivot data below last used row (including existing Grand Total rows if any)
+    Dim appendRow As Long
+    appendRow = lastUsedRow + 1
+
+    Dim ptDataRowCount As Long
+    ptDataRowCount = ptDataRange.Rows.Count - 1  ' Exclude header row
+
+    Dim srcRow As Long, tgtRow As Long
+    tgtRow = appendRow
+
+    For srcRow = ptHeaderRow + 1 To ptHeaderRow + ptDataRowCount
+        Dim isGrandTotalRow As Boolean
+        isGrandTotalRow = False
+        Dim firstColVal As String
+        firstColVal = LCase(Trim(wsPivot.Cells(srcRow, ptDataRange.Column).Value))
+        If firstColVal Like "*grand total*" Then
+            isGrandTotalRow = True
+        End If
+        
+        If Not isGrandTotalRow Then
+            For i = LBound(pivotHeaders) To UBound(pivotHeaders)
+                Dim ptColNum As Long, revColNum As Long
+                ptColNum = ptHeaderDict(pivotHeaders(i))
+                revColNum = revHeaderDict(revenueHeaders(i))
+
+                Dim srcCell As Range
+                Set srcCell = wsPivot.Cells(srcRow, ptDataRange.Column + ptColNum - 1)
+                Dim val As Variant
+                val = srcCell.Value
+                targetWs.Cells(tgtRow, revColNum).Value = val
+                targetWs.Cells(tgtRow, revColNum).NumberFormat = srcCell.NumberFormat
+            Next i
+            tgtRow = tgtRow + 1
+        End If
+    Next srcRow
+
+    ' Add new Grand Total row below appended data
+    Dim grandTotalRow As Long
+    grandTotalRow = tgtRow
+
+    targetWs.Cells(grandTotalRow, revHeaderDict("row labels")).Value = "Grand Total"
+    targetWs.Cells(grandTotalRow, revHeaderDict("row labels")).Font.Bold = True
+
+    ' Sum the numeric column(s) - here only "sum of net line amount in usd"
+    Dim sumColNum As Long
+    sumColNum = revHeaderDict("sum of net line amount in usd")
+
+    Dim dataStartRow As Long: dataStartRow = revHeaderRow + 1
+
+    Dim sumRange As Range
+    Set sumRange = targetWs.Range(targetWs.Cells(dataStartRow, sumColNum), targetWs.Cells(grandTotalRow - 1, sumColNum))
+
+    targetWs.Cells(grandTotalRow, sumColNum).Formula = "=SUM(" & sumRange.Address(False, False) & ")"
+    targetWs.Cells(grandTotalRow, sumColNum).Font.Bold = True
+
+    targetWs.Columns.AutoFit
+
+    ' --- Calculate "Sale IN USD M" column ---
+
+    Dim saleUSDColNum As Long
+    If revHeaderDict.Exists(LCase("sale in usd m")) Then
+        saleUSDColNum = revHeaderDict(LCase("sale in usd m"))
+
+        ' Fill Sale IN USD M data rows (excluding header and grand total)
+        Dim r As Long
+        For r = dataStartRow To grandTotalRow - 1
+            Dim valNet As Variant
+            valNet = targetWs.Cells(r, sumColNum).Value
+            If IsNumeric(valNet) And Not IsEmpty(valNet) Then
+                targetWs.Cells(r, saleUSDColNum).Value = valNet / 1000000#
+            Else
+                targetWs.Cells(r, saleUSDColNum).ClearContents
+            End If
+        Next r
+
+        ' Calculate Grand Total row for Sale IN USD M
+        Dim grandTotalVal As Variant
+        grandTotalVal = targetWs.Cells(grandTotalRow, sumColNum).Value
+        If IsNumeric(grandTotalVal) And Not IsEmpty(grandTotalVal) Then
+            targetWs.Cells(grandTotalRow, saleUSDColNum).Value = grandTotalVal / 1000000#
+        Else
+            targetWs.Cells(grandTotalRow, saleUSDColNum).ClearContents
+        End If
+
+        ' Optional formatting
+        targetWs.Columns(saleUSDColNum).NumberFormat = "#,##0.00"
+    Else
+        MsgBox "'Sale IN USD M' column not found in 'Revenue $M' headers row " & revHeaderRow & ".", vbExclamation
+    End If
+
+    ' --- Part 4: Rebuild VLOOKUP in column E ---
+
+    Dim vlookupRangeStartRow As Long
+    Dim vlookupLastRow As Long
+    Dim vlookupFormula As String
+
+    vlookupRangeStartRow = revHeaderRow + 1
+    vlookupLastRow = targetWs.Cells(targetWs.Rows.Count, 1).End(xlUp).Row
+
+    If vlookupLastRow < vlookupRangeStartRow Then
+        MsgBox "No data rows detected to apply VLOOKUP in column E.", vbExclamation
+    Else
+        ' Clear old VLOOKUP in column E below headers
+        targetWs.Range(targetWs.Cells(vlookupRangeStartRow, "E"), targetWs.Cells(targetWs.Rows.Count, "E")).ClearContents
+
+        ' New VLOOKUP formula
+        vlookupFormula = "=VLOOKUP(B" & vlookupRangeStartRow & ",'Back-up_BP code  & KAM'!$B$3:$C$142,2,FALSE)"
+
+        ' Insert formula in first data row
+        targetWs.Cells(vlookupRangeStartRow, "E").Formula = vlookupFormula
+
+        ' Fill down to last data row (exclude grand total row)
+        If vlookupLastRow - 1 >= vlookupRangeStartRow Then
+            targetWs.Range(targetWs.Cells(vlookupRangeStartRow, "E"), targetWs.Cells(vlookupLastRow - 1, "E")).FillDown
+        End If
+    End If
+
+    ' Save and notify before closing
+    targetWb.Save
+    MsgBox "Pivot data appended, new Grand Total and 'Sale IN USD M' calculated, and VLOOKUP formula rebuilt.", vbInformation
+    targetWb.Close SaveChanges:=False
+
+    Application.ScreenUpdating = True
+End Sub
+
+
